@@ -1,0 +1,130 @@
+import { recipe, t } from '../ui/system';
+
+export const displayList = recipe({
+  name: 'display-list',
+  slots: [
+    'grid',
+    'item',
+    'card',
+    'cardLink',
+    'lock',
+    'preview',
+    'previewView',
+    'previewName',
+    'visuallyHidden',
+    'meta',
+    'cardActions',
+    'empty',
+    'emptyActions',
+    'dialogForm',
+  ],
+  styles: {
+    base: {
+      grid: {
+        listStyle: 'none',
+        margin: 0,
+        padding: 0,
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 18rem), 1fr))',
+        gap: t.space.md.var,
+      },
+      item: { display: 'flex' },
+      card: {
+        flex: 1,
+        position: 'relative',
+        transition: t.transition.borderShadow.var,
+        '&:hover': {
+          borderColor: t.color.tone.accent.border.var,
+          boxShadow: t.shadow.md.var,
+        },
+        '&:has(a:focus-visible)': {
+          outline: `2px solid ${t.color.border.focus.var}`,
+          outlineOffset: '2px',
+        },
+      },
+      // Stretched link: the title's hit area covers the card; card actions sit above it.
+      cardLink: {
+        color: 'inherit',
+        textDecoration: 'none',
+        outline: 'none',
+        '&::after': {
+          content: '""',
+          position: 'absolute',
+          inset: 0,
+          borderRadius: 'inherit',
+        },
+        '&:hover': { textDecoration: 'underline', textUnderlineOffset: '0.2em' },
+      },
+      lock: {
+        display: 'inline-grid',
+        placeItems: 'center',
+        color: t.color.text.secondary.var,
+        position: 'relative',
+        zIndex: 1,
+        borderRadius: t.radius.sm.var,
+        '&:focus-visible': { outline: `2px solid ${t.color.border.focus.var}`, outlineOffset: '2px' },
+      },
+      // The display's views as miniature layouts, so cards differ at a glance.
+      preview: {
+        listStyle: 'none',
+        margin: 0,
+        padding: 0,
+        display: 'grid',
+        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+        gap: t.space.sm.var,
+        marginBlock: t.space.xs.var,
+      },
+      previewView: {
+        display: 'grid',
+        gap: t.space.xxs.var,
+        minWidth: 0,
+        '&[data-hidden]': { color: t.color.text.tertiary.var },
+      },
+      previewName: {
+        fontSize: t.fontSize.xs.var,
+        fontWeight: t.fontWeight.medium.var,
+        color: t.color.text.secondary.var,
+        overflow: 'hidden',
+        whiteSpace: 'nowrap',
+        textOverflow: 'ellipsis',
+        '[data-hidden] &': { fontStyle: 'italic', color: t.color.text.tertiary.var },
+      },
+      visuallyHidden: {
+        position: 'absolute',
+        width: '1px',
+        height: '1px',
+        overflow: 'hidden',
+        clip: 'rect(0 0 0 0)',
+        whiteSpace: 'nowrap',
+      },
+      meta: {
+        display: 'flex',
+        alignItems: 'center',
+        gap: t.space.xs.var,
+        flexWrap: 'wrap',
+        '& .var-ui-badge': { display: 'inline-flex', alignItems: 'center', gap: t.space.xxs.var },
+      },
+      cardActions: {
+        display: 'inline-flex',
+        gap: t.space.xxs.var,
+        marginInlineStart: 'auto',
+        // Sit above the card's full-size press target.
+        position: 'relative',
+        zIndex: 1,
+      },
+      empty: {
+        paddingBlock: t.space.xxxl.var,
+        borderRadius: t.radius.xl.var,
+        border: `1px dashed ${t.color.border.strong.var}`,
+        background: t.color.background.surface.var,
+      },
+      dialogForm: { display: 'grid', gap: t.space.md.var },
+      emptyActions: {
+        display: 'flex',
+        gap: t.space.xs.var,
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+      },
+    },
+  },
+});

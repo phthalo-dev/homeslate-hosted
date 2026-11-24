@@ -1,50 +1,42 @@
-import { Center, Paper, Title, Text, Button, Stack, Anchor } from '@mantine/core';
-import { IconBrandGoogle } from '@tabler/icons-react';
 import { Link } from 'react-router-dom';
+import { Text } from '@var-ui/react';
 import { HomeslateMark } from '../components/HomeslateMark';
+import { GoogleSignInButton } from '../components/GoogleSignInButton';
 import { useAuth } from '../contexts/AuthContext';
-import classes from './AuthPage.module.css';
+import { kioskCard as s } from './KioskCard.styles';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 export function AuthPage() {
+  useDocumentTitle('Sign in');
   const { signIn, isLoading } = useAuth();
 
   return (
-    <div className={classes.root}>
-      <Center className={classes.center}>
-        <Paper className={classes.card} p="xl" radius="lg">
-          <Stack align="center" gap="lg">
-            <HomeslateMark framed size={72} className={classes.icon} />
-            <Stack align="center" gap={4}>
-              <Title order={2} className={classes.title}>HomeSlate</Title>
-              <Text c="dimmed" size="sm" ta="center">
-                Manage your home displays from any device
-              </Text>
-            </Stack>
-            <Button
-              leftSection={<IconBrandGoogle size={18} />}
-              onClick={signIn}
-              loading={isLoading}
-              size="md"
-              fullWidth
-            >
-              Sign in with Google
-            </Button>
-            <Text size="xs" c="dimmed" ta="center">
-              <Anchor component={Link} to="/" c="dimmed" underline="hover">
-                About Homeslate
-              </Anchor>
-              {' · '}
-              <Anchor component={Link} to="/privacy" c="dimmed" underline="hover">
-                Privacy
-              </Anchor>
-              {' · '}
-              <Anchor component={Link} to="/terms" c="dimmed" underline="hover">
-                Terms
-              </Anchor>
-            </Text>
-          </Stack>
-        </Paper>
-      </Center>
-    </div>
+    <main className={s.screen} data-color-mode="dark">
+      <div className={s.card}>
+        <HomeslateMark framed size={64} className={s.mark} />
+        <h1 className={s.title}>Sign in to Homeslate</h1>
+        <Text tone="secondary" className={s.body}>
+          Arrange the displays around your home from any laptop or phone.
+        </Text>
+        <GoogleSignInButton size="lg" label="Continue with Google" onClick={signIn} loading={isLoading} fullWidth />
+        <Text size="xs" tone="secondary" className={s.fine}>
+          We only ask for the Google access your widgets need.{' '}
+          <Link to="/" className={s.link}>
+            Why?
+          </Link>
+        </Text>
+        <nav className={s.footer} aria-label="About Homeslate">
+          <Link to="/" className={s.link}>
+            About Homeslate
+          </Link>
+          <Link to="/privacy" className={s.link}>
+            Privacy
+          </Link>
+          <Link to="/terms" className={s.link}>
+            Terms
+          </Link>
+        </nav>
+      </div>
+    </main>
   );
 }

@@ -1,5 +1,7 @@
+import { dialogAutoFocus } from './dialogFocus';
+import { ConfirmDialog } from './ConfirmDialog';
 import { useState } from 'react';
-import { Modal, Stack, Text, TextInput, Group, Button } from '@mantine/core';
+import { Alert, AlertDialog, Button, Stack, Text, TextField } from '@var-ui/react';
 
 interface Props {
   opened: boolean;
@@ -13,6 +15,8 @@ export function DeleteAccountModal({ opened, onClose, email, onConfirm }: Props)
   const [deleting, setDeleting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const matches = confirmEmail.trim().toLowerCase() === email.trim().toLowerCase();
+
   const handleClose = () => {
     if (deleting) return;
     setConfirmEmail('');
@@ -21,6 +25,7 @@ export function DeleteAccountModal({ opened, onClose, email, onConfirm }: Props)
   };
 
   const handleDelete = async () => {
+    if (!matches) return;
     setDeleting(true);
     setError(null);
     try {
@@ -34,47 +39,56 @@ export function DeleteAccountModal({ opened, onClose, email, onConfirm }: Props)
   };
 
   return (
-    <Modal
-      opened={opened}
-      onClose={handleClose}
-      title="Delete account"
-      centered
-      size="sm"
+    <ConfirmDialog
+      open={opened}
+      onOpenChange={(open) => {
+        if (!open) handleClose();
+      }}
+      title="Delete your account?"
+      size="xl"
     >
-      <Stack gap="md">
-        <Text size="sm">
-          This permanently deletes your Homeslate account, owned displays, saved
-          layouts, and stored Google tokens. If you have a paid subscription, it
-          will be canceled and your Stripe customer record removed. Displays
-          shared with you by others are not affected. This cannot be undone.
-        </Text>
-        <TextInput
-          label={`Type your email to confirm`}
-          placeholder={email}
-          value={confirmEmail}
-          onChange={(e) => setConfirmEmail(e.currentTarget.value)}
-          disabled={deleting}
-          autoComplete="off"
-        />
-        {error && (
-          <Text size="sm" c="red">
-            {error}
+      <form
+        onSubmit={(event) => {
+          event.preventDefault();
+          void handleDelete();
+        }}
+      >
+        <Stack gap="md">
+          <Text size="sm" tone="secondary">
+            This permanently deletes your Homeslate account, the displays you own, their saved
+            views, and stored Google tokens. A paid subscription is canceled and your billing
+            details are removed. Displays others shared with you are not affected.
           </Text>
-        )}
-        <Group justify="flex-end" gap="sm">
-          <Button variant="default" onClick={handleClose} disabled={deleting}>
-            Cancel
-          </Button>
-          <Button
-            color="red"
-            loading={deleting}
-            disabled={confirmEmail.trim().toLowerCase() !== email.trim().toLowerCase()}
-            onClick={() => void handleDelete()}
-          >
-            Delete account
-          </Button>
-        </Group>
-      </Stack>
-    </Modal>
+          <Text size="sm" weight="medium">
+            This cannot be undone.
+          </Text>
+          <TextField
+            label={
+              <>
+                Type <strong>{email}</strong> to confirm
+              </>
+            }
+            value={confirmEmail}
+            onValueChange={setConfirmEmail}
+            disabled={deleting}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          {error && (
+            <Alert tone="danger" role="alert">
+              {error}
+            </Alert>
+          )}
+          <AlertDialog.Actions>
+            <Button type="button" onClick={handleClose} disabled={deleting} ref={dialogAutoFocus}>
+              Cancel
+            </Button>
+            <Button type="submit" tone="danger" appearance="solid" loading={deleting} disabled={!matches}>
+              Delete account
+            </Button>
+          </AlertDialog.Actions>
+        </Stack>
+      </form>
+    </ConfirmDialog>
   );
 }

@@ -1,19 +1,21 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import {
-  Modal,
+  Alert,
+  Avatar,
+  Button,
+  Dialog,
+  IconButton,
+  List,
+  Spinner,
   Stack,
   Text,
-  Group,
-  TextInput,
-  Button,
-  Avatar,
-  ActionIcon,
-  Tooltip,
-  Divider,
-  Badge,
-  Paper,
-} from '@mantine/core';
-import { IconTrash, IconMail, IconUser } from '@tabler/icons-react';
+  TextField,
+} from '@var-ui/react';
+import { notify } from './AppToasts';
+import { IconArrowBackUp, IconTrash, IconMail } from '@tabler/icons-react';
+import { Hint } from './Hint';
+import { dialogAutoFocus } from './dialogFocus';
+import { inviteModal as s } from './InviteModal.styles';
 import { apiClient, ApiError } from '../services/apiClient';
 import type {
   CollaboratorDto,
@@ -23,6 +25,9 @@ import type {
   InviteSummaryDto,
 } from '../types/api';
 
+/** Something@something.tld — enough to catch typos before the server does. */
+const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
 interface Props {
   opened: boolean;
   onClose: () => void;
@@ -31,11 +36,27 @@ interface Props {
   accessToken: string;
 }
 
+/**
+ * Two stacked lines inside a `List.Item` label. (Var UI's `label` + `description` sit side by
+ * side on one row and each truncate, which cut both the address and the status.)
+ */
+function PersonLines({ primary, secondary }: { primary: string; secondary: string }) {
+  return (
+    <span className={s.person}>
+      <span className={s.personPrimary} title={primary}>
+        {primary}
+      </span>
+      <span className={s.personSecondary}>{secondary}</span>
+    </span>
+  );
+}
+
 export function InviteModal({ opened, onClose, displayId, displayName, accessToken }: Props) {
   const [email, setEmail] = useState('');
   const [inviting, setInviting] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSuccess, setInviteSuccess] = useState<string | null>(null);
+  const [revokedEmail, setRevokedEmail] = useState<string | null>(null);
 
   const [invites, setInvites] = useState<InviteSummaryDto[]>([]);
   const [collaborators, setCollaborators] = useState<CollaboratorDto[]>([]);
@@ -64,12 +85,25 @@ export function InviteModal({ opened, onClose, displayId, displayName, accessTok
       setEmail('');
       setInviteError(null);
       setInviteSuccess(null);
+      setRevokedEmail(null);
     }
   }, [opened, loadInvites]);
+
+  const emailRef = useRef<HTMLInputElement | null>(null);
+  const setEmailInput = useCallback((element: HTMLInputElement | null) => {
+    emailRef.current = element;
+    dialogAutoFocus(element);
+  }, []);
 
   const handleInvite = async () => {
     const trimmed = email.trim().toLowerCase();
     if (!trimmed) return;
+    // Our own check and message on submit, instead of the browser's constraint bubble.
+    if (!EMAIL_PATTERN.test(trimmed)) {
+      setInviteError('Enter a full email address, like name@gmail.com.');
+      emailRef.current?.focus();
+      return;
+    }
     setInviting(true);
     setInviteError(null);
     setInviteSuccess(null);
@@ -82,7 +116,7 @@ export function InviteModal({ opened, onClose, displayId, displayName, accessTok
         }
       );
       if (!data.invited_email) {
-        setInviteError('Failed to send invite');
+        setInviteError('Couldn’t send the invite. Try again.');
       } else {
         setEmail('');
         setInviteSuccess(`Invite sent to ${data.invited_email}`);
@@ -92,7 +126,7 @@ export function InviteModal({ opened, onClose, displayId, displayName, accessTok
       if (err instanceof ApiError) {
         setInviteError(err.message);
       } else {
-        setInviteError('Network error');
+        setInviteError('Couldn’t reach Homeslate. Check your connection and try again.');
       }
     } finally {
       setInviting(false);
@@ -105,9 +139,36 @@ export function InviteModal({ opened, onClose, displayId, displayName, accessTok
         token: accessToken,
         query: { displayId, email: inviteEmail },
       });
+      setInviteSuccess(null);
+      setRevokedEmail(inviteEmail);
       await loadInvites();
     } catch {
-      // ignore
+      notify({ tone: 'danger', title: 'Could not revoke the invite', description: 'Try again in a moment.' });
+    }
+  };
+
+  // Undo for a revoke: send the same invite again. (Lives inside the dialog: anything outside a
+  // modal <dialog> is inert while it is open.)
+  // Keep keyboard focus in place: the revoked row's button is gone, so go to Undo; after Undo
+  // (which removes itself) go back to the email field.
+  const undoRef = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (revokedEmail) undoRef.current?.focus();
+  }, [revokedEmail]);
+
+  const undoRevoke = async () => {
+    const restoreEmail = revokedEmail;
+    if (!restoreEmail) return;
+    setRevokedEmail(null);
+    emailRef.current?.focus();
+    try {
+      await apiClient.post<InviteCreateResponse, InviteCreateRequest>('/api/invites', {
+        token: accessToken,
+        body: { displayId, email: restoreEmail },
+      });
+      await loadInvites();
+    } catch {
+      notify({ tone: 'danger', title: 'Could not restore the invite', description: 'Send it again from the field above.' });
     }
   };
 
@@ -119,121 +180,135 @@ export function InviteModal({ opened, onClose, displayId, displayName, accessTok
       });
       await loadInvites();
     } catch {
-      // ignore
+      notify({ tone: 'danger', title: 'Could not remove access', description: 'Try again in a moment.' });
     }
   };
 
+  const hasPeople = collaborators.length > 0 || invites.length > 0;
+
   return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={`Invite to "${displayName}"`}
-      centered
-      size="sm"
+    <Dialog
+      open={opened}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title={`Share “${displayName}” with your household`}
+      description="Invite a Google account. They can edit views and settings once they sign in."
+      size="xl"
     >
-      <Stack gap="md">
-        {/* Invite form */}
-        <Stack gap="xs">
-          <Text size="sm" c="dimmed">
-            Enter a Google account email. They will gain full access to this display when they next sign in.
-          </Text>
-          <Group gap="xs" wrap="nowrap" align="flex-start">
-            <TextInput
-              placeholder="someone@gmail.com"
-              value={email}
-              onChange={(e) => { setEmail(e.currentTarget.value); setInviteError(null); setInviteSuccess(null); }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && email.trim()) handleInvite(); }}
-              style={{ flex: 1 }}
-              error={inviteError ?? undefined}
-              leftSection={<IconMail size={14} />}
-            />
-            <Button
-              size="sm"
-              loading={inviting}
-              disabled={!email.trim()}
-              onClick={handleInvite}
-              style={{ flexShrink: 0 }}
-            >
-              Invite
+      <Stack gap="lg">
+        <form
+          className={s.form}
+          noValidate
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (email.trim()) void handleInvite();
+          }}
+        >
+          <TextField
+            label="Email address"
+            type="email"
+            placeholder="name@gmail.com"
+            value={email}
+            onValueChange={(value) => {
+              setEmail(value);
+              setInviteError(null);
+              setInviteSuccess(null);
+            }}
+            errorMessage={inviteError ?? undefined}
+            className={s.emailField}
+            autoComplete="email"
+            validationBehavior="aria"
+            ref={setEmailInput}
+          />
+          <Button
+            type="submit"
+            tone="accent"
+            appearance="solid"
+            loading={inviting}
+            disabled={!email.trim()}
+            className={s.sendButton}
+          >
+            Send invite
+          </Button>
+        </form>
+        {inviteSuccess && (
+          <Alert tone="success" role="status">
+            {inviteSuccess}
+          </Alert>
+        )}
+        {revokedEmail && (
+          <div className={s.undoRow} role="status">
+            <Text size="sm" className={s.undoText}>
+              Invite to {revokedEmail} revoked.
+            </Text>
+            <Button size="sm" appearance="ghost" tone="accent" onClick={() => void undoRevoke()} ref={undoRef}>
+              <IconArrowBackUp size={16} aria-hidden />
+              Undo
             </Button>
-          </Group>
-          {inviteSuccess && (
-            <Text size="xs" c="teal">{inviteSuccess}</Text>
-          )}
-        </Stack>
-
-        {/* Collaborators */}
-        {!loading && collaborators.length > 0 && (
-          <>
-            <Divider label="Has access" labelPosition="left" />
-            <Stack gap="xs">
-              {collaborators.map((c) => (
-                <Paper key={c.id} p="xs" radius="md" withBorder>
-                  <Group justify="space-between" wrap="nowrap">
-                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-                      <Avatar src={c.picture} size="sm" radius="xl">
-                        <IconUser size={14} />
-                      </Avatar>
-                      <Stack gap={1} style={{ minWidth: 0 }}>
-                        <Text size="sm" fw={500} truncate>{c.name}</Text>
-                        <Text size="xs" c="dimmed" truncate>{c.email}</Text>
-                      </Stack>
-                    </Group>
-                    <Tooltip label="Remove access">
-                      <ActionIcon
-                        variant="subtle"
-                        color="red"
-                        size="sm"
-                        onClick={() => handleRemoveCollaborator(c.id)}
-                        style={{ flexShrink: 0 }}
-                      >
-                        <IconTrash size={14} />
-                      </ActionIcon>
-                    </Tooltip>
-                  </Group>
-                </Paper>
-              ))}
-            </Stack>
-          </>
+          </div>
         )}
 
-        {/* Pending invites */}
-        {!loading && invites.length > 0 && (
-          <>
-            <Divider label="Pending invites" labelPosition="left" />
-            <Stack gap="xs">
-              {invites.map((inv) => (
-                <Paper key={inv.id} p="xs" radius="md" withBorder>
-                  <Group justify="space-between" wrap="nowrap">
-                    <Group gap="xs" wrap="nowrap" style={{ minWidth: 0 }}>
-                      <IconMail size={16} style={{ flexShrink: 0, opacity: 0.5 }} />
-                      <Stack gap={1} style={{ minWidth: 0 }}>
-                        <Text size="sm" truncate>{inv.invited_email}</Text>
-                        <Badge variant="outline" size="xs" color="yellow">awaiting sign-in</Badge>
-                      </Stack>
-                    </Group>
-                    <Tooltip label="Revoke invite">
-                      <ActionIcon
-                        variant="subtle"
-                        color="red"
-                        size="sm"
-                        onClick={() => handleRevokeInvite(inv.invited_email)}
-                        style={{ flexShrink: 0 }}
-                      >
-                        <IconTrash size={14} />
-                      </ActionIcon>
-                    </Tooltip>
-                  </Group>
-                </Paper>
-              ))}
-            </Stack>
-          </>
+        {loading && !hasPeople ? (
+          <div className={s.loading}>
+            <Spinner size="sm" label="Loading people with access" />
+          </div>
+        ) : null}
+
+        {collaborators.length > 0 && (
+          <List header="Has access" hasDividers density="compact">
+            {collaborators.map((c) => (
+              <List.Item
+                key={c.id}
+                label={<PersonLines primary={c.name} secondary={c.email} />}
+                startContent={<Avatar src={c.picture || undefined} name={c.name} alt="" size="sm" />}
+                endContent={
+                  <Hint label={`Remove ${c.name}`}>
+                    <IconButton
+                      icon={<IconTrash size={15} />}
+                      aria-label={`Remove access for ${c.name}`}
+                      size="sm"
+                      appearance="ghost"
+                      tone="danger"
+                      onClick={() => void handleRemoveCollaborator(c.id)}
+                    />
+                  </Hint>
+                }
+              />
+            ))}
+          </List>
         )}
 
-        {!loading && collaborators.length === 0 && invites.length === 0 && (
-          <Text size="xs" c="dimmed" ta="center">No one else has access to this display yet.</Text>
+        {invites.length > 0 && (
+          <List header="Waiting to sign in" hasDividers density="compact">
+            {invites.map((inv) => (
+              <List.Item
+                key={inv.id}
+                label={<PersonLines primary={inv.invited_email} secondary="Access starts when they next sign in" />}
+                startContent={<IconMail size={18} className={s.mailIcon} aria-hidden />}
+                endContent={
+                  <Hint label="Revoke invite">
+                    <IconButton
+                      icon={<IconTrash size={15} />}
+                      aria-label={`Revoke invite for ${inv.invited_email}`}
+                      size="sm"
+                      appearance="ghost"
+                      tone="danger"
+                      onClick={() => void handleRevokeInvite(inv.invited_email)}
+                    />
+                  </Hint>
+                }
+              />
+            ))}
+          </List>
+        )}
+
+        {!loading && !hasPeople && (
+          <Text size="sm" tone="secondary" className={s.empty}>
+            Only you can see and edit this display right now.
+          </Text>
         )}
       </Stack>
-    </Modal>
+    </Dialog>
   );
 }

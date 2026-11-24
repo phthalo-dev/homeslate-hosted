@@ -1,18 +1,27 @@
-import { MantineProvider, createTheme, ActionIcon, Tooltip, Loader, Center } from '@mantine/core';
+import { MantineProvider } from '@mantine/core';
 import { IconX } from '@tabler/icons-react';
-import { lazy, Suspense, useMemo, type ReactNode } from 'react';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { lazy, Suspense, useLayoutEffect, useMemo, type ReactNode } from 'react';
+import { BrowserRouter, Routes, Route, Navigate, useHref, useLocation, useNavigate } from 'react-router-dom';
+import { RouterProvider } from 'react-aria-components';
+import { DesignSystemProvider, IconButton, IconProvider, useColorMode } from '@var-ui/react';
+import { defaultIcons } from '@var-ui/icons';
 import { useWakeLock } from './hooks/useWakeLock';
 import { AuthProvider } from './contexts/AuthContext';
 import { useAuth } from './contexts/AuthContext';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { useDashboardStore } from './store/dashboardStore';
-import { mantineThemeFromResolved } from '@homeslate/display/canvas';
 import { ManagementLayout } from './components/ManagementLayout';
 import { HostGoogleRuntime } from './host/HostGoogleRuntime';
+import { PageLoader } from './components/PageLoader';
+import { Hint } from './components/Hint';
+import { AppToastHost } from './components/AppToasts';
+import { COLOR_MODE_STORAGE_KEY, homeslateTheme } from './ui/theme';
+import { buildDisplayMantineTheme } from './ui/mantineTheme';
+import { useDisplaySurfaceScheme } from './ui/displaySurfaceScheme';
+import { previewExit } from './App.styles';
+// Mantine stays only for the @homeslate/* editor, display, and widget packages.
 import '@mantine/core/styles.css';
 import '@mantine/dates/styles.css';
-import './App.css';
 
 // Lazy-load heavy page bundles so they are only fetched when first needed.
 // DisplayViewer is used on the always-on tablet so keep it eager to avoid
@@ -23,7 +32,7 @@ import {
   persistDisplayId,
   resolveDisplayId,
 } from './displayPersistence';
-import { resolveAppSurface } from './appSurface';
+import { resolveAppSurface, type AppSurface } from './appSurface';
 import { setDisplaySession } from './pwaUpdate';
 
 const AuthPage = lazy(() => import('./pages/AuthPage').then((m) => ({ default: m.AuthPage })));
@@ -35,59 +44,68 @@ const DisplayDetailPage = lazy(() => import('./pages/DisplayDetailPage').then((m
 const ViewEditorPage = lazy(() => import('./pages/ViewEditorPage').then((m) => ({ default: m.ViewEditorPage })));
 const PairPage = lazy(() => import('./pages/PairPage').then((m) => ({ default: m.PairPage })));
 
-function PageLoader() {
+/**
+ * Var UI (app chrome) + Mantine (the @homeslate/* editor and display packages).
+ *
+ * The chrome follows the user's preference (OS by default, or a stored light/dark pin from the
+ * account menu), independent of any display. Mantine gets the selected display's *theme*
+ * (brand colour, radii) but the app's colour scheme; `ui/mantineBridge.styles.ts` maps Mantine's
+ * variables onto Var UI tokens for package chrome.
+ */
+function UiProviders({ children }: { children: ReactNode }) {
   return (
-    <Center style={{ width: '100%', height: '100%', minHeight: '60vh' }}>
-      <Loader size="lg" />
-    </Center>
+    <DesignSystemProvider
+      applyToDocument
+      customTheme={homeslateTheme}
+      defaultColorMode="system"
+      storageKey={COLOR_MODE_STORAGE_KEY}
+    >
+      <IconProvider icons={defaultIcons}>
+        <MantineLayer>{children}</MantineLayer>
+        <AppToastHost />
+      </IconProvider>
+    </DesignSystemProvider>
   );
 }
 
-const SITE_FONT = '"Public Sans", "Helvetica Neue", Arial, sans-serif';
-
-const DEFAULT_MANTINE_THEME = createTheme({
-  primaryColor: 'indigo',
-  fontFamily: SITE_FONT,
-  headings: {
-    fontFamily: SITE_FONT,
-  },
-  colors: {
-    dark: [
-      '#C1C2C5',
-      '#A6A7AB',
-      '#909296',
-      '#5c5f66',
-      '#373A40',
-      '#2C2E33',
-      '#25262b',
-      '#1A1B1E',
-      '#141517',
-      '#101113',
-    ],
-  },
-  defaultRadius: 'md',
-  components: {
-    Button: { defaultProps: { radius: 'md' } },
-    Paper:  { defaultProps: { radius: 'md' } },
-  },
-});
-
-function MantineBridge({ children }: { children: ReactNode }) {
-  const { resolved, colorMode } = useTheme();
-  const theme = useMemo(
-    () =>
-      createTheme({
-        ...DEFAULT_MANTINE_THEME,
-        ...mantineThemeFromResolved(resolved),
-        fontFamily: SITE_FONT,
-        headings: { fontFamily: SITE_FONT },
-      }),
-    [resolved],
-  );
+/**
+ * Mantine's `forceColorScheme` lands on `<html>` (`data-mantine-color-scheme`, and Mantine's
+ * `:root { color-scheme }`, which Var UI's `light-dark()` tokens also read). So it must follow
+ * the *app's* colour mode, never a display's — otherwise a light display turns the whole app
+ * light. Display-coloured regions scope the display's scheme themselves (the editor canvas in
+ * `ViewEditorPage`); full-screen display surfaces take over the page via `displaySurfaceScheme`.
+ */
+function MantineLayer({ children }: { children: ReactNode }) {
+  const { resolved } = useTheme();
+  const { resolvedColorMode } = useColorMode();
+  const displaySurfaceScheme = useDisplaySurfaceScheme();
+  const mantineTheme = useMemo(() => buildDisplayMantineTheme(resolved), [resolved]);
   return (
-    <MantineProvider theme={theme} forceColorScheme={colorMode}>
+    <MantineProvider theme={mantineTheme} forceColorScheme={displaySurfaceScheme ?? resolvedColorMode}>
       {children}
     </MantineProvider>
+  );
+}
+
+/**
+ * Marks the document with the active surface (`display` | `public` | `app`). Global styles key
+ * off it: the wall display keeps Mantine's display theme and canvas background, everything else
+ * gets the Var UI surfaces.
+ */
+function useSurfaceAttribute(surface: AppSurface) {
+  const value = surface === 'display' || surface === 'preview' ? 'display' : surface === 'app' ? 'app' : 'public';
+  useLayoutEffect(() => {
+    document.documentElement.dataset.hsSurface = value;
+  }, [value]);
+}
+
+/** Lets Var UI links (`Button href`, `TopNav.Item`, `Link`) navigate client-side. */
+function RouterBridge({ children }: { children: ReactNode }) {
+  const navigate = useNavigate();
+  return (
+    <RouterProvider navigate={(href) => void navigate(href)} useHref={useHref}>
+      {children}
+    </RouterProvider>
   );
 }
 
@@ -119,6 +137,7 @@ function AppInner() {
     displayId: displayParam,
     preview: !!preview,
   });
+  useSurfaceAttribute(surface);
 
   // No display for this tab — clear the short-lived session copy so the
   // management UI is reachable. Keep localStorage so the installed app still
@@ -130,7 +149,7 @@ function AppInner() {
   if (surface === 'pair') {
     setDisplaySession(false);
     return (
-      <Suspense fallback={<PageLoader />}>
+      <Suspense fallback={<PageLoader surface="public" />}>
         <PairPage />
       </Suspense>
     );
@@ -143,22 +162,22 @@ function AppInner() {
 
   if (surface === 'home') {
     setDisplaySession(false);
-    return <Suspense fallback={<PageLoader />}><HomePage /></Suspense>;
+    return <Suspense fallback={<PageLoader surface="public" />}><HomePage /></Suspense>;
   }
 
   if (surface === 'privacy') {
     setDisplaySession(false);
-    return <Suspense fallback={<PageLoader />}><PrivacyPage /></Suspense>;
+    return <Suspense fallback={<PageLoader surface="public" />}><PrivacyPage /></Suspense>;
   }
 
   if (surface === 'terms') {
     setDisplaySession(false);
-    return <Suspense fallback={<PageLoader />}><TermsPage /></Suspense>;
+    return <Suspense fallback={<PageLoader surface="public" />}><TermsPage /></Suspense>;
   }
 
   if (surface === 'auth') {
     setDisplaySession(false);
-    return <Suspense fallback={<PageLoader />}><AuthPage /></Suspense>;
+    return <Suspense fallback={<PageLoader surface="public" />}><AuthPage /></Suspense>;
   }
 
   // In-app preview mode: render the viewer with an exit button overlay
@@ -173,19 +192,19 @@ function AppInner() {
           forceRotation={preview.forceRotation}
           colorMode={preview.colorMode}
         />
-        <div style={{ position: 'fixed', top: 12, right: 12, zIndex: 9999 }}>
-          <Tooltip label="Exit preview" position="left" withArrow>
-            <ActionIcon
+        <div className={previewExit}>
+          <Hint label="Exit preview">
+            <IconButton
+              icon={<IconX size={18} />}
+              aria-label="Exit preview"
               size="lg"
-              radius="xl"
-              variant="filled"
-              color="dark"
+              pill
+              elevated
+              tone="neutral"
+              appearance="solid"
               onClick={closePreview}
-              style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.5)' }}
-            >
-              <IconX size={18} />
-            </ActionIcon>
-          </Tooltip>
+            />
+          </Hint>
         </div>
       </div>
     );
@@ -209,11 +228,13 @@ function App() {
     <AuthProvider>
       <HostGoogleRuntime>
         <ThemeProvider>
-          <MantineBridge>
+          <UiProviders>
             <BrowserRouter>
-              <AppInner />
+              <RouterBridge>
+                <AppInner />
+              </RouterBridge>
             </BrowserRouter>
-          </MantineBridge>
+          </UiProviders>
         </ThemeProvider>
       </HostGoogleRuntime>
     </AuthProvider>

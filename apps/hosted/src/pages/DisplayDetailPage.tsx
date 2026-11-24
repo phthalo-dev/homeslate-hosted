@@ -1,50 +1,60 @@
-import { useState, useRef, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
-  Group,
-  Text,
-  Title,
-  Button,
-  ActionIcon,
-  Tooltip,
-  Stack,
-  Paper,
-  UnstyledButton,
-  Switch,
-  Select,
+  createElement,
+  lazy,
+  Suspense,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type ComponentType,
+  type MouseEvent,
+  type ReactNode,
+} from 'react';
+import { Link, useSearchParams } from 'react-router-dom';
+import {
+  AlertDialog,
   Badge,
-  TextInput,
+  Button,
+  Dialog,
+  EditableText,
+  IconButton,
   PinInput,
-  Modal,
-} from '@mantine/core';
+  SegmentedControl,
+  Select,
+  Skeleton,
+  Switch,
+  Text,
+  TextField,
+  TopNav,
+} from '@var-ui/react';
+import { notify } from '../components/AppToasts';
 import * as TablerIcons from '@tabler/icons-react';
 import {
-  IconArrowLeft,
-  IconPlus,
-  IconTrash,
   IconDeviceTv,
-  IconEdit,
-  IconCheck,
-  IconX,
-  IconShare,
-  IconLock,
-  IconLockOpen,
-  IconGripVertical,
   IconEye,
   IconEyeOff,
-  IconUserPlus,
-  IconSun,
-  IconMoon,
-  IconMoodSmile,
+  IconGripVertical,
   IconLayoutGrid,
-  IconSettings,
+  IconLock,
+  IconLockOpen,
+  IconMoodSmile,
+  IconMoon,
   IconPalette,
+  IconPencil,
+  IconPlus,
+  IconQrcode,
+  IconSettings,
+  IconSparkles,
+  IconSun,
+  IconTrash,
+  IconUserPlus,
 } from '@tabler/icons-react';
 import { IconPickerModal } from '../components/IconPickerModal';
 import { AlarmListEditor } from '@homeslate/widgets';
 import {
   DndContext,
   closestCenter,
+  KeyboardSensor,
   PointerSensor,
   useSensor,
   useSensors,
@@ -52,6 +62,7 @@ import {
 } from '@dnd-kit/core';
 import {
   SortableContext,
+  sortableKeyboardCoordinates,
   useSortable,
   verticalListSortingStrategy,
   arrayMove,
@@ -61,14 +72,19 @@ import { v4 as uuidv4 } from 'uuid';
 import { ShareDisplayModal } from '../components/ShareDisplayModal';
 import { InviteModal } from '../components/InviteModal';
 import { UpgradeModal } from '../components/UpgradeModal';
-import { PlanUsageIndicator } from '../components/PlanUsageIndicator';
+import { PlanUsageIndicator, ProBadge } from '../components/PlanUsageIndicator';
+import { ManagementShell } from '../components/ManagementShell';
+import { Hint } from '../components/Hint';
+import { SaveStatus, type SaveState } from '../components/SaveStatus';
+import { ConfirmDialog } from '../components/ConfirmDialog';
+import { LayoutThumbnail } from '../components/LayoutThumbnail';
+import { dialogAutoFocus, dialogAutoFocusSelect } from '../components/dialogFocus';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
+import { pageHeader as ph } from '../ui/shared.styles';
 import { wouldExceedViewLimit } from '../billing/entitlements';
-import { viewPlanUsage } from '../billing/planUsage';
 import { entitlementsForPlan } from '../billing/plans';
-import { AccountMenu } from '../components/AccountMenu';
 import { useAuth } from '../contexts/AuthContext';
 import { useDashboardStore } from '../store/dashboardStore';
-import { ThemeEditor } from '@homeslate/editor';
 import { displayRecordToDocument } from '../displayDocumentBridge';
 import { HOLIDAY_PREVIEW_OPTIONS } from '@homeslate/display';
 import type { ColorMode, HolidayId } from '@homeslate/schema';
@@ -76,7 +92,7 @@ import { getWidgetByType } from '@homeslate/widgets';
 import type { DashboardLayout, WidgetDefinition } from '../types/widget';
 import { apiClient, ApiError } from '../services/apiClient';
 import type { ConfigUpsertRequest, DisplayPasscodeRequest, DisplayRenameRequest } from '../types/api';
-import classes from './DisplayDetailPage.module.css';
+import { displayDetail as s } from './DisplayDetailPage.styles';
 
 const INTERVAL_OPTIONS = [
   { value: '15000',   label: '15 seconds' },
@@ -89,6 +105,20 @@ const INTERVAL_OPTIONS = [
 
 const PRESET_VIEW_NAMES = ['Morning', 'Evening', 'Weekend'] as const;
 type ManagementPage = 'views' | 'settings' | 'theme';
+const MANAGEMENT_PAGES: ManagementPage[] = ['views', 'settings', 'theme'];
+const PAGE_TITLES: Record<ManagementPage, string> = { views: 'Views', settings: 'Settings', theme: 'Theme' };
+
+// The theme editor is the heaviest tab: load it on demand, and start loading as soon as
+// the pointer or focus reaches its tab so the click rarely waits.
+const ThemeEditor = lazy(() => import('@homeslate/editor').then((m) => ({ default: m.ThemeEditor })));
+const prefetchThemeEditor = () => {
+  void import('@homeslate/editor');
+};
+
+/** Plain left clicks only: modified clicks open the tab link in a new tab/window. */
+function isPlainClick(event: MouseEvent) {
+  return event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey;
+}
 
 function cloneConfig<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
@@ -166,166 +196,192 @@ function createPresetLayout(name: (typeof PRESET_VIEW_NAMES)[number]): Dashboard
   };
 }
 
-// ─── Sortable view card ────────────────────────────────────────────────────────
+// ─── Sortable view row ─────────────────────────────────────────────────────────
 
-interface ViewCardProps {
+type TablerIcon = ComponentType<{ size?: number; stroke?: number }>;
+
+const TABLER_ICONS = TablerIcons as unknown as Record<string, TablerIcon | undefined>;
+
+/** A view's chosen icon (stored by Tabler export name), or a smiley placeholder. */
+function ViewIconGlyph({ name }: { name: string | undefined }) {
+  const Icon = name ? TABLER_ICONS[name] : undefined;
+  return Icon ? createElement(Icon, { size: 18, stroke: 1.6 }) : <IconMoodSmile size={18} stroke={1.4} />;
+}
+
+interface ViewRowProps {
   layout: DashboardLayout;
-  onSelect: () => void;
+  index: number;
+  editHref: string;
   onDelete: () => void;
-  onRename: (name: string) => void;
+  onRename: () => void;
   onToggleHidden: () => void;
   onSetIcon: (icon: string | undefined) => void;
 }
 
-function SortableViewCard({ layout, onSelect, onDelete, onRename, onToggleHidden, onSetIcon }: ViewCardProps) {
-  const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
+function SortableViewRow({ layout, index, editHref, onDelete, onRename, onToggleHidden, onSetIcon }: ViewRowProps) {
+  const { attributes, listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } = useSortable({
     id: layout.id,
   });
-  const [editing, setEditing] = useState(false);
-  const [nameValue, setNameValue] = useState(layout.name);
   const [iconPickerOpen, setIconPickerOpen] = useState(false);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const CurrentIcon = layout.icon
-    ? (TablerIcons as Record<string, unknown>)[layout.icon] as React.ComponentType<{ size?: number; stroke?: number }> | null
-    : null;
-
-  const style: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 10 : undefined,
-  };
-
-  const commitRename = () => {
-    const trimmed = nameValue.trim();
-    if (trimmed && trimmed !== layout.name) {
-      onRename(trimmed);
-    } else {
-      setNameValue(layout.name);
-    }
-    setEditing(false);
-  };
-
-  const startEditing = (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setNameValue(layout.name);
-    setEditing(true);
-    setTimeout(() => inputRef.current?.focus(), 0);
-  };
+  const widgetCount = layout.widgets.length;
 
   return (
-    <Paper
+    <li
       ref={setNodeRef}
-      style={style}
-      className={`${classes.viewCard} ${layout.hidden ? classes.viewCardHidden : ''}`}
-      p="sm"
-      radius="md"
+      data-view-row={layout.id}
+      className={s.viewRow}
+      data-dragging={isDragging || undefined}
+      data-hidden={layout.hidden || undefined}
+      style={{ transform: CSS.Transform.toString(transform), transition }}
     >
-      <Group justify="space-between" gap="xs" wrap="nowrap">
-        {/* Drag handle */}
-        <ActionIcon
-          variant="subtle"
-          size="sm"
-          className={classes.dragHandle}
-          {...attributes}
-          {...listeners}
-          style={{ cursor: 'grab', flexShrink: 0 }}
-          tabIndex={-1}
-        >
-          <IconGripVertical size={14} />
-        </ActionIcon>
+      <button
+        type="button"
+        ref={setActivatorNodeRef}
+        className={s.dragHandle}
+        aria-label={`Reorder ${layout.name}`}
+        {...attributes}
+        {...listeners}
+      >
+        <IconGripVertical size={16} aria-hidden />
+      </button>
 
-        {/* Name / edit */}
-        {editing ? (
-          <Group gap={4} style={{ flex: 1 }}>
-            <TextInput
-              ref={inputRef}
-              value={nameValue}
-              onChange={(e) => setNameValue(e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') commitRename();
-                if (e.key === 'Escape') { setNameValue(layout.name); setEditing(false); }
-              }}
-              size="xs"
-              style={{ flex: 1 }}
+      {/* One leading visual: the layout thumbnail with the view's icon (and its picker) in the
+          corner. Narrow phones drop the thumbnail and keep the icon. */}
+      <div className={s.viewVisual}>
+        <Link to={editHref} className={s.viewThumb} tabIndex={-1} aria-hidden>
+          <LayoutThumbnail layout={layout} size="sm" />
+        </Link>
+        <span className={s.viewIcon}>
+          <Hint label={layout.icon ? 'Change icon' : 'Add an icon'}>
+            <IconButton
+              icon={<ViewIconGlyph name={layout.icon} />}
+              aria-label={layout.icon ? `Change icon for ${layout.name}` : `Add an icon to ${layout.name}`}
+              appearance={layout.icon ? 'subtle' : 'outline'}
+              tone={layout.icon ? 'accent' : 'neutral'}
+              size="sm"
+              onClick={() => setIconPickerOpen(true)}
             />
-            <ActionIcon variant="subtle" color="green" size="sm" onClick={commitRename}>
-              <IconCheck size={14} />
-            </ActionIcon>
-            <ActionIcon variant="subtle" color="red" size="sm" onClick={() => { setNameValue(layout.name); setEditing(false); }}>
-              <IconX size={14} />
-            </ActionIcon>
-          </Group>
-        ) : (
-          <UnstyledButton
-            className={classes.viewCardBtn}
-            onClick={onSelect}
-          >
-            <Stack gap={2}>
-              <Group gap={4} wrap="nowrap">
-                <Text fw={500} size="sm" style={{ opacity: layout.hidden ? 0.45 : 1 }}>
-                  {layout.name}
-                </Text>
-                {layout.hidden && (
-                  <Badge variant="outline" size="xs" color="gray">hidden</Badge>
-                )}
-              </Group>
-              <Badge variant="light" size="xs" color="dark" w="fit-content">
-                {layout.widgets.length} {layout.widgets.length === 1 ? 'widget' : 'widgets'}
-              </Badge>
-            </Stack>
-          </UnstyledButton>
-        )}
+          </Hint>
+        </span>
+      </div>
 
-        {/* Actions */}
-        {!editing && (
-          <Group gap={4} wrap="nowrap" style={{ flexShrink: 0 }}>
-            <Tooltip label={layout.icon ? 'Change view icon' : 'Set view icon'}>
-              <ActionIcon
-                variant={layout.icon ? 'light' : 'subtle'}
-                color={layout.icon ? 'blue' : 'gray'}
-                size="sm"
-                onClick={(e) => { e.stopPropagation(); setIconPickerOpen(true); }}
-              >
-                {CurrentIcon ? <CurrentIcon size={14} stroke={1.5} /> : <IconMoodSmile size={14} />}
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="Rename view">
-              <ActionIcon variant="subtle" size="sm" onClick={startEditing}>
-                <IconEdit size={14} />
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label={layout.hidden ? 'Show view' : 'Hide view'}>
-              <ActionIcon
-                variant="subtle"
-                size="sm"
-                color={layout.hidden ? 'gray' : 'blue'}
-                onClick={(e) => { e.stopPropagation(); onToggleHidden(); }}
-              >
-                {layout.hidden ? <IconEyeOff size={14} /> : <IconEye size={14} />}
-              </ActionIcon>
-            </Tooltip>
-            <Tooltip label="Delete view">
-              <ActionIcon
-                variant="subtle"
-                color="red"
-                size="sm"
-                onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              >
-                <IconTrash size={14} />
-              </ActionIcon>
-            </Tooltip>
-          </Group>
-        )}
-      </Group>
+      <div className={s.viewMain}>
+        <Link to={editHref} className={s.viewName} data-view-name="">
+          {layout.name}
+        </Link>
+        <span className={s.viewMeta}>
+          <span>
+            {index === 0 ? 'Shown first' : `View ${index + 1}`}
+            <span aria-hidden> · </span>
+            {widgetCount} {widgetCount === 1 ? 'widget' : 'widgets'}
+          </span>
+          {layout.hidden && (
+            <Badge tone="warning" appearance="subtle">
+              Hidden from display
+            </Badge>
+          )}
+        </span>
+      </div>
+
+      <div className={s.viewActions}>
+        <Hint label="Rename">
+          <IconButton icon={<IconPencil size={16} />} aria-label={`Rename ${layout.name}`} appearance="ghost" onClick={onRename} />
+        </Hint>
+        <Hint label={layout.hidden ? 'Show on display' : 'Hide from display'}>
+          <IconButton
+            icon={layout.hidden ? <IconEyeOff size={16} /> : <IconEye size={16} />}
+            aria-label={layout.hidden ? `Show ${layout.name} on the display` : `Hide ${layout.name} from the display`}
+            aria-pressed={layout.hidden}
+            appearance="ghost"
+            onClick={onToggleHidden}
+          />
+        </Hint>
+        <Hint label="Delete">
+          <IconButton
+            icon={<IconTrash size={16} />}
+            aria-label={`Delete ${layout.name}`}
+            appearance="ghost"
+            tone="danger"
+            onClick={onDelete}
+          />
+        </Hint>
+        <Button href={editHref} size="sm" className={s.editButton}>
+          Edit layout
+        </Button>
+      </div>
+
       <IconPickerModal
         opened={iconPickerOpen}
         onClose={() => setIconPickerOpen(false)}
         currentIcon={layout.icon}
         onSelect={onSetIcon}
       />
-    </Paper>
+    </li>
+  );
+}
+
+// ─── Settings anatomy ──────────────────────────────────────────────────────────
+
+/** A labelled switch row: text on the left, the switch right-aligned, max 560px wide. */
+function SwitchSetting({
+  label,
+  description,
+  checked,
+  disabled,
+  onChange,
+}: {
+  label: string;
+  description: ReactNode;
+  checked: boolean;
+  disabled?: boolean;
+  onChange: (checked: boolean) => void;
+}) {
+  const id = useId();
+  return (
+    <div className={s.settingRow} data-disabled={disabled || undefined}>
+      <div className={s.settingText}>
+        <span id={`${id}-label`} className={s.settingLabel}>
+          {label}
+        </span>
+        <span id={`${id}-description`} className={s.settingDescription}>
+          {description}
+        </span>
+      </div>
+      <Switch
+        aria-labelledby={`${id}-label`}
+        aria-describedby={`${id}-description`}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onChange}
+        className={s.settingControl}
+      />
+    </div>
+  );
+}
+
+/** One settings group: a titled card whose fields are spaced on a 20px rhythm. */
+function SettingsGroup({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
+  const id = useId();
+  return (
+    <section className={s.group} aria-labelledby={id}>
+      <div className={s.groupHeader}>
+        <h3 id={id} className={s.groupTitle}>
+          {title}
+        </h3>
+        {description ? <p className={s.groupDescription}>{description}</p> : null}
+      </div>
+      <div className={s.groupBody}>{children}</div>
+    </section>
+  );
+}
+
+/** Placeholder while a lazy tab panel loads. */
+function PanelSkeleton({ label }: { label: string }) {
+  return (
+    <div className={s.panelSkeleton} role="status" aria-label={label}>
+      <Skeleton className={s.skeletonSide} />
+      <Skeleton className={s.skeletonMain} />
+    </div>
   );
 }
 
@@ -333,7 +389,6 @@ function SortableViewCard({ layout, onSelect, onDelete, onRename, onToggleHidden
 
 export function DisplayDetailPage() {
   const { user, accessToken } = useAuth();
-  const navigate = useNavigate();
   const {
     displays,
     selectedDisplayId,
@@ -357,12 +412,9 @@ export function DisplayDetailPage() {
     openPreview,
   } = useDashboardStore();
   const display = displays.find((d) => d.id === selectedDisplayId);
-  const viewUsage = display
-    ? viewPlanUsage(display.ownerPlan ?? user?.plan, display.layouts.length)
-    : null;
   const colorMode: ColorMode = display?.colorMode ?? 'dark';
-  const [editingName, setEditingName] = useState(false);
-  const [nameValue, setNameValue] = useState(display?.name ?? '');
+  const [saveState, setSaveState] = useState<SaveState>('idle');
+  const saveSeq = useRef(0);
   const [shareOpen, setShareOpen] = useState(false);
   const [inviteOpen, setInviteOpen] = useState(false);
   const [pinInput, setPinInput] = useState('');
@@ -375,10 +427,22 @@ export function DisplayDetailPage() {
   const [newViewOpen, setNewViewOpen] = useState(false);
   const [newViewName, setNewViewName] = useState('New View');
   const [upgradeOpen, setUpgradeOpen] = useState(false);
-  const [activePage, setActivePage] = useState<ManagementPage>('views');
+  const [renameViewId, setRenameViewId] = useState<string | null>(null);
+  const [renameViewValue, setRenameViewValue] = useState('');
+  const [searchParams] = useSearchParams();
+  const tabParam = searchParams.get('tab');
+  const activePage: ManagementPage = MANAGEMENT_PAGES.includes(tabParam as ManagementPage)
+    ? (tabParam as ManagementPage)
+    : 'views';
+  // Tabs are links (?tab=…), and React Router renders navigations as transitions. Track the
+  // clicked tab locally so the highlight and panel switch on the click, not when the
+  // transition commits. It is dropped as soon as the URL moves off the page it was set on.
+  const [pendingPage, setPendingPage] = useState<{ page: ManagementPage; from: ManagementPage } | null>(null);
+  const shownPage = pendingPage && pendingPage.from === activePage ? pendingPage.page : activePage;
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } }),
+    useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
   const alarmsSaveDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -388,6 +452,8 @@ export function DisplayDetailPage() {
     [display],
   );
 
+  useDocumentTitle(display ? `${display.name} · ${PAGE_TITLES[shownPage]}` : null);
+
   if (!display) return null;
 
   const handleConfigError = (err: unknown) => {
@@ -396,7 +462,21 @@ export function DisplayDetailPage() {
       return;
     }
     console.error(err);
+    notify({ tone: 'danger', title: 'Changes not saved', description: 'Check your connection — your last change may not reach the display.' });
   };
+
+  // Plan-limit hints, from the same entitlement checks that open the Upgrade dialog.
+  const viewEntitlements = entitlementsForPlan(display.ownerPlan);
+  const existingViewNames = new Set(display.layouts.map((layout) => layout.name.trim().toLowerCase()));
+  const missingPresetViews = PRESET_VIEW_NAMES.filter((name) => !existingViewNames.has(name.toLowerCase()));
+  const newViewNeedsPro = wouldExceedViewLimit(display.layouts.length, 1, viewEntitlements);
+  const allStarterViewsAdded = missingPresetViews.length === 0;
+  // Same rule as New view: at the plan limit the action stays visible and leads to Upgrade.
+  const starterViewsNeedPro = wouldExceedViewLimit(
+    display.layouts.length,
+    Math.max(missingPresetViews.length, 1),
+    viewEntitlements,
+  );
 
   const wouldBlockNewViews = (additionalCount: number): boolean => {
     const entitlements = entitlementsForPlan(display.ownerPlan);
@@ -440,13 +520,81 @@ export function DisplayDetailPage() {
       holidayPreviewId,
       alarms,
     };
+    const seq = ++saveSeq.current;
+    setSaveState('saving');
     void apiClient
       .put<unknown, ConfigUpsertRequest>('/api/config', {
         token: accessToken,
         query: { displayId: display.id },
         body: payload,
       })
-      .catch(handleConfigError);
+      .then(() => {
+        if (seq === saveSeq.current) setSaveState('saved');
+      })
+      .catch((err) => {
+        if (seq === saveSeq.current) setSaveState('error');
+        handleConfigError(err);
+      });
+  };
+
+  /** Move keyboard focus to a view row's name link (after delete / undo), else the Views heading. */
+  const focusViewRow = (viewId: string | null) => {
+    setTimeout(() => {
+      const target =
+        (viewId ? document.querySelector<HTMLElement>(`[data-view-row="${viewId}"] [data-view-name]`) : null) ??
+        document.getElementById('views-heading');
+      target?.focus();
+    }, 0);
+  };
+
+  /** After the confirmation: delete, keep the user's place, and offer Undo for a while. */
+  const handleConfirmDeleteView = () => {
+    const id = confirmDeleteId;
+    setConfirmDeleteId(null);
+    const index = display.layouts.findIndex((l) => l.id === id);
+    const removed = display.layouts[index];
+    if (!id || !removed) return;
+    const displayId = display.id;
+    const remaining = display.layouts.filter((l) => l.id !== id);
+    deleteLayout(id);
+    saveConfig({ layouts: remaining });
+    focusViewRow(remaining[index]?.id ?? remaining[index - 1]?.id ?? null);
+    notify({
+      tone: 'success',
+      title: `Deleted “${removed.name}”`,
+      action: {
+        label: 'Undo',
+        onAction: () => {
+          const current = useDashboardStore.getState().displays.find((d) => d.id === displayId);
+          if (!current || current.layouts.some((l) => l.id === removed.id)) return;
+          const layouts = [...current.layouts];
+          layouts.splice(Math.min(index, layouts.length), 0, removed);
+          upsertDisplay({ ...current, layouts });
+          saveConfig({ layouts });
+          focusViewRow(removed.id);
+          notify({ tone: 'success', title: `Restored “${removed.name}”` });
+        },
+      },
+    });
+  };
+
+  const handleSetIcon = (id: string, icon: string | undefined) => {
+    setLayoutIcon(id, icon);
+    saveConfig({ layouts: display.layouts.map((l) => (l.id === id ? { ...l, icon } : l)) });
+  };
+
+  const openRenameView = (id: string, name: string) => {
+    setRenameViewId(id);
+    setRenameViewValue(name);
+  };
+
+  const commitRenameView = () => {
+    const trimmed = renameViewValue.trim();
+    const current = display.layouts.find((l) => l.id === renameViewId);
+    if (renameViewId && trimmed && current && trimmed !== current.name) {
+      handleRenameView(renameViewId, trimmed);
+    }
+    setRenameViewId(null);
   };
 
   const commitNewView = () => {
@@ -462,14 +610,11 @@ export function DisplayDetailPage() {
     setNewViewOpen(false);
   };
 
-  const handleRename = async () => {
-    const trimmed = nameValue.trim();
-    if (!trimmed || trimmed === display.name) {
-      setEditingName(false);
-      return;
-    }
+  const handleRename = (nextName: string) => {
+    const trimmed = nextName.trim();
+    if (!trimmed || trimmed === display.name) return;
+    const previous = display.name;
     renameDisplay(display.id, trimmed);
-    setEditingName(false);
     if (accessToken) {
       void apiClient
         .patch<unknown, DisplayRenameRequest>('/api/displays', {
@@ -477,7 +622,12 @@ export function DisplayDetailPage() {
           query: { id: display.id },
           body: { name: trimmed },
         })
-        .catch(console.error);
+        .then(() => notify({ tone: 'success', title: `Renamed to “${trimmed}”`, durationMs: 2500 }))
+        .catch((err) => {
+          console.error(err);
+          renameDisplay(display.id, previous);
+          notify({ tone: 'danger', title: 'Could not rename the display', description: 'Your change was undone. Try again.' });
+        });
     }
   };
 
@@ -511,9 +661,11 @@ export function DisplayDetailPage() {
   };
 
   const handleAddPresetViews = () => {
-    const existing = new Set(display.layouts.map((layout) => layout.name.trim().toLowerCase()));
-    const missing = PRESET_VIEW_NAMES.filter((name) => !existing.has(name.toLowerCase()));
-    if (missing.length === 0) return;
+    const missing = missingPresetViews;
+    if (missing.length === 0) {
+      if (starterViewsNeedPro) setUpgradeOpen(true);
+      return;
+    }
     if (wouldBlockNewViews(missing.length)) return;
 
     const presetLayouts = missing.map((name) => createPresetLayout(name));
@@ -525,6 +677,11 @@ export function DisplayDetailPage() {
       activeLayoutId: display.activeLayoutId ?? updatedLayouts[0]?.id ?? null,
     });
     saveConfig({ layouts: updatedLayouts });
+    notify({
+      tone: 'success',
+      title: missing.length === 1 ? `Added “${missing[0]}”` : `Added ${missing.slice(0, -1).join(', ')} and ${missing[missing.length - 1]}`,
+      description: 'Starter views come with a few widgets to edit.',
+    });
   };
 
   const handleDeleteView = (id: string) => {
@@ -544,6 +701,14 @@ export function DisplayDetailPage() {
     const newOrder = arrayMove(ids, oldIndex, newIndex);
     reorderLayouts(newOrder);
     saveConfig({ layouts: arrayMove(display.layouts, oldIndex, newIndex) });
+    const moved = display.layouts[oldIndex];
+    if (moved) {
+      notify({
+        tone: 'success',
+        title: newIndex === 0 ? `“${moved.name}” now shows first` : `Moved “${moved.name}” to position ${newIndex + 1}`,
+        durationMs: 2500,
+      });
+    }
   };
 
   const handleRenameView = (id: string, name: string) => {
@@ -552,20 +717,52 @@ export function DisplayDetailPage() {
     // here we do it directly since we're on DisplayDetailPage
     const updatedLayouts = display.layouts.map((l) => l.id === id ? { ...l, name } : l);
     saveConfig({ layouts: updatedLayouts });
+    notify({ tone: 'success', title: `Renamed to “${name}”`, durationMs: 2500 });
   };
 
   const handleToggleHidden = (id: string) => {
+    const target = display.layouts.find((l) => l.id === id);
     toggleLayoutHidden(id);
     const updatedLayouts = display.layouts.map((l) => l.id === id ? { ...l, hidden: !l.hidden } : l);
     saveConfig({ layouts: updatedLayouts });
+    if (target) {
+      notify({
+        tone: 'success',
+        title: target.hidden ? `“${target.name}” is back on the display` : `“${target.name}” is hidden from the display`,
+        durationMs: 2500,
+      });
+    }
   };
 
+  const deleteTarget = display.layouts.find((l) => l.id === confirmDeleteId);
+  const isOwner = display.isOwner ?? true;
   const visibleLayoutCount = display.layouts.filter((l) => !l.hidden).length;
-  const navItems: Array<{ key: ManagementPage; label: string; icon: React.ComponentType<{ size?: number }> }> = [
+  const navItems: Array<{ key: ManagementPage; label: string; icon: ComponentType<{ size?: number }> }> = [
     { key: 'views', label: 'Views', icon: IconLayoutGrid },
     { key: 'settings', label: 'Settings', icon: IconSettings },
-    { key: 'theme', label: 'Themes', icon: IconPalette },
+    { key: 'theme', label: 'Theme', icon: IconPalette },
   ];
+  const basePath = `/displays/${display.id}`;
+  const hrefFor = (page: ManagementPage) => (page === 'views' ? basePath : `${basePath}?tab=${page}`);
+  const rotationDescription =
+    visibleLayoutCount <= 1
+      ? display.layouts.length <= 1
+        ? 'Add a second view to turn on rotation.'
+        : 'Show at least two views to turn on rotation.'
+      : 'The display cycles through every visible view.';
+
+  const sectionHeader = (title: string, lead: ReactNode, extra?: { badge?: ReactNode; actions?: ReactNode }) => (
+    <header className={ph.root}>
+      <div className={ph.text}>
+        <div className={ph.titleRow}>
+          <h2 className={ph.title}>{title}</h2>
+          {extra?.badge}
+        </div>
+        <p className={ph.lead}>{lead}</p>
+      </div>
+      {extra?.actions ? <div className={ph.actions}>{extra.actions}</div> : null}
+    </header>
+  );
 
   return (
     <>
@@ -574,8 +771,9 @@ export function DisplayDetailPage() {
       onClose={() => setShareOpen(false)}
       displayId={display.displayId}
       displayName={display.name}
+      passcodeEnabled={display.passcodeEnabled}
     />
-    {(display.isOwner ?? true) && accessToken && (
+    {isOwner && accessToken && (
       <InviteModal
         opened={inviteOpen}
         onClose={() => setInviteOpen(false)}
@@ -586,412 +784,415 @@ export function DisplayDetailPage() {
     )}
     <UpgradeModal opened={upgradeOpen} onClose={() => setUpgradeOpen(false)} />
 
-    {/* Alert: cannot delete last view */}
-    <Modal
-      opened={alertOpen}
-      onClose={() => setAlertOpen(false)}
-      title="Cannot delete view"
-      size="sm"
-      centered
+    <ConfirmDialog
+      open={alertOpen}
+      onOpenChange={(open) => setAlertOpen(open)}
+      title="Keep at least one view"
+      dismissable
     >
-      <Text size="sm">You cannot delete the last view. Add another view before deleting this one.</Text>
-      <Group justify="flex-end" mt="md">
-        <Button onClick={() => setAlertOpen(false)}>OK</Button>
-      </Group>
-    </Modal>
-
-    {/* Confirm: delete view */}
-    <Modal
-      opened={confirmDeleteId !== null}
-      onClose={() => setConfirmDeleteId(null)}
-      title="Delete view"
-      size="sm"
-      centered
-    >
-      <Text size="sm">Are you sure you want to delete this view? This cannot be undone.</Text>
-      <Group justify="flex-end" mt="md" gap="sm">
-        <Button variant="default" onClick={() => setConfirmDeleteId(null)}>Cancel</Button>
-        <Button
-          color="red"
-          onClick={() => {
-            if (confirmDeleteId) deleteLayout(confirmDeleteId);
-            setConfirmDeleteId(null);
-          }}
-        >
-          Delete
+      <Text size="sm" tone="secondary">
+        A display needs a view to show. Add another view before deleting this one.
+      </Text>
+      <AlertDialog.Actions>
+        <Button tone="accent" appearance="solid" onClick={() => setAlertOpen(false)} ref={dialogAutoFocus}>
+          Got it
         </Button>
-      </Group>
-    </Modal>
+      </AlertDialog.Actions>
+    </ConfirmDialog>
 
-    {/* Prompt: new view name */}
-    <Modal
-      opened={newViewOpen}
-      onClose={() => setNewViewOpen(false)}
+    <ConfirmDialog
+      open={confirmDeleteId !== null}
+      onOpenChange={(open) => {
+        if (!open) setConfirmDeleteId(null);
+      }}
+      title={deleteTarget ? `Delete “${deleteTarget.name}”?` : 'Delete view?'}
+    >
+      <Text size="sm" tone="secondary">
+        Its widgets and layout are removed from this display. You can undo this for a few seconds afterwards.
+      </Text>
+      <AlertDialog.Actions>
+        <Button onClick={() => setConfirmDeleteId(null)} ref={dialogAutoFocus}>
+          Cancel
+        </Button>
+        <Button tone="danger" appearance="solid" onClick={handleConfirmDeleteView}>
+          Delete view
+        </Button>
+      </AlertDialog.Actions>
+    </ConfirmDialog>
+
+
+    <Dialog
+      open={newViewOpen}
+      onOpenChange={(open) => setNewViewOpen(open)}
       title="New view"
-      size="sm"
-      centered
+      description="Views are full-screen layouts the display can rotate through."
+      size="lg"
     >
-      <TextInput
-        label="View name"
-        value={newViewName}
-        onChange={(e) => setNewViewName(e.currentTarget.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' && newViewName.trim()) {
-            commitNewView();
-          }
-          if (e.key === 'Escape') setNewViewOpen(false);
+      <form
+        className={s.dialogForm}
+        onSubmit={(event) => {
+          event.preventDefault();
+          commitNewView();
         }}
-        autoFocus
-        data-autofocus
-      />
-      <Group justify="flex-end" mt="md" gap="sm">
-        <Button variant="default" onClick={() => setNewViewOpen(false)}>Cancel</Button>
-        <Button
-          disabled={!newViewName.trim()}
-          onClick={commitNewView}
+      >
+        <TextField
+          label="View name"
+          value={newViewName}
+          onValueChange={setNewViewName}
+          ref={dialogAutoFocusSelect}
+        />
+        <Dialog.Actions>
+          <Button type="button" onClick={() => setNewViewOpen(false)}>
+            Cancel
+          </Button>
+          <Button type="submit" tone="accent" appearance="solid" disabled={!newViewName.trim()}>
+            Create view
+          </Button>
+        </Dialog.Actions>
+      </form>
+    </Dialog>
+
+    <Dialog
+      open={renameViewId !== null}
+      onOpenChange={(open) => {
+        if (!open) setRenameViewId(null);
+      }}
+      title="Rename view"
+      size="lg"
+    >
+      <form
+        className={s.dialogForm}
+        onSubmit={(event) => {
+          event.preventDefault();
+          commitRenameView();
+        }}
+      >
+        <TextField
+          label="View name"
+          value={renameViewValue}
+          onValueChange={setRenameViewValue}
+          ref={dialogAutoFocusSelect}
+        />
+        <Dialog.Actions>
+          <Button type="button" onClick={() => setRenameViewId(null)}>
+            Cancel
+          </Button>
+          <Button type="submit" tone="accent" appearance="solid" disabled={!renameViewValue.trim()}>
+            Save
+          </Button>
+        </Dialog.Actions>
+      </form>
+    </Dialog>
+
+    <ManagementShell
+      title={
+        <EditableText
+          value={display.name}
+          onCommit={handleRename}
+          activation="click"
+          readOnly={!isOwner}
+          aria-label="Display name"
+          className={s.titleEditor}
         >
-          Create
-        </Button>
-      </Group>
-    </Modal>
-    <div className={classes.root}>
-      <header className={classes.header}>
-        <Group gap="md" wrap="nowrap">
-          <Tooltip label="Back to displays">
-            <ActionIcon variant="subtle" onClick={() => navigate('/displays')}>
-              <IconArrowLeft size={18} />
-            </ActionIcon>
-          </Tooltip>
-          {editingName ? (
-            <Group gap={4}>
-              <TextInput
-                value={nameValue}
-                onChange={(e) => setNameValue(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter') handleRename();
-                  if (e.key === 'Escape') setEditingName(false);
-                }}
-                size="sm"
-                autoFocus
-                w={200}
+          <h1 className={s.title}>{display.name}</h1>
+        </EditableText>
+      }
+      navLabel="Display sections"
+      nav={navItems.map((item) => {
+        const Icon = item.icon;
+        return (
+          <TopNav.Item
+            key={item.key}
+            label={item.label}
+            icon={<Icon size={16} />}
+            href={hrefFor(item.key)}
+            selected={shownPage === item.key}
+            onClick={(event: MouseEvent) => {
+              if (isPlainClick(event) && item.key !== shownPage) {
+                setPendingPage({ page: item.key, from: activePage });
+              }
+            }}
+            onPointerEnter={item.key === 'theme' ? prefetchThemeEditor : undefined}
+            onFocus={item.key === 'theme' ? prefetchThemeEditor : undefined}
+          />
+        );
+      })}
+      actions={
+        <>
+          {isOwner && (
+            <Hint label="Invite people">
+              <IconButton
+                icon={<IconUserPlus size={18} />}
+                aria-label="Invite people to this display"
+                appearance="ghost"
+                onClick={() => setInviteOpen(true)}
               />
-              <ActionIcon variant="subtle" color="green" onClick={handleRename}><IconCheck size={16} /></ActionIcon>
-              <ActionIcon variant="subtle" color="red" onClick={() => setEditingName(false)}><IconX size={16} /></ActionIcon>
-            </Group>
-          ) : (
-            <Group gap={6}>
-              <Title order={4} className={classes.title}>{display.name}</Title>
-              <Tooltip label="Rename">
-                <ActionIcon
-                  variant="subtle"
-                  size="sm"
-                  onClick={() => { setNameValue(display.name); setEditingName(true); }}
-                >
-                  <IconEdit size={14} />
-                </ActionIcon>
-              </Tooltip>
-            </Group>
+            </Hint>
           )}
-          <Group gap={4} className={classes.topNav} wrap="nowrap">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <UnstyledButton
-                  key={item.key}
-                  className={`${classes.topNavItem} ${activePage === item.key ? classes.topNavItemActive : ''}`}
-                  onClick={() => setActivePage(item.key)}
-                >
-                  <Icon size={15} />
-                  <Text size="sm" fw={500}>{item.label}</Text>
-                </UnstyledButton>
-              );
-            })}
-          </Group>
-        </Group>
-        <Group gap="sm">
-          {(display.isOwner ?? true) && (
-            <Tooltip label="Invite collaborators">
-              <ActionIcon variant="subtle" onClick={() => setInviteOpen(true)}>
-                <IconUserPlus size={18} />
-              </ActionIcon>
-            </Tooltip>
-          )}
-          <Tooltip label="Share / QR code">
-            <ActionIcon variant="subtle" onClick={() => setShareOpen(true)}>
-              <IconShare size={18} />
-            </ActionIcon>
-          </Tooltip>
-          <Tooltip label={colorMode === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}>
-            <ActionIcon
-              variant="subtle"
-              onClick={() => {
-                const next: ColorMode = colorMode === 'dark' ? 'light' : 'dark';
-                setColorMode(display.id, next);
-                saveConfig({ colorMode: next });
-              }}
-            >
-              {colorMode === 'dark' ? <IconSun size={18} /> : <IconMoon size={18} />}
-            </ActionIcon>
-          </Tooltip>
-          <AccountMenu />
-        </Group>
-      </header>
-
-      <main className={classes.main}>
-        <section className={`${classes.content} ${activePage === 'theme' ? classes.themeContent : ''}`}>
-          {activePage === 'views' && (
-            <>
-              <Group justify="space-between" mb="md">
-                <Group gap="sm">
-                  <Title order={5} className={classes.sectionTitle}>Views</Title>
-                  <PlanUsageIndicator
-                    usage={viewUsage}
-                    onUpgradeClick={() => setUpgradeOpen(true)}
+          <Hint label="Open on a tablet">
+            <IconButton
+              icon={<IconQrcode size={18} />}
+              aria-label="Open this display on a tablet"
+              appearance="ghost"
+              onClick={() => setShareOpen(true)}
+            />
+          </Hint>
+        </>
+      }
+      overflowActions={[
+        ...(isOwner ? [{ id: 'invite', label: 'Invite people…', onAction: () => setInviteOpen(true) }] : []),
+        { id: 'share', label: 'Open on a tablet…', onAction: () => setShareOpen(true) },
+      ]}
+    >
+      {shownPage === 'views' && (
+        <section aria-labelledby="views-heading">
+          <header className={ph.root}>
+            <div className={ph.text}>
+              <div className={ph.titleRow}>
+                <h2 id="views-heading" className={ph.title} tabIndex={-1}>
+                  Views
+                </h2>
+                <PlanUsageIndicator
+                  plan={display.ownerPlan ?? user?.plan}
+                  kind="view"
+                  used={display.layouts.length}
+                  onUpgradeClick={() => setUpgradeOpen(true)}
+                />
+              </div>
+              <p className={ph.lead}>
+                The display shows these in order
+                {display.rotationEnabled && visibleLayoutCount > 1 ? ' and rotates through the visible ones' : ''}. Drag
+                to reorder.
+              </p>
+            </div>
+            <div className={ph.actions}>
+              <Button
+                appearance="outline"
+                onClick={() => openPreview({ displayId: display.displayId, forceRotation: true, colorMode })}
+              >
+                <IconDeviceTv size={16} aria-hidden />
+                Preview
+              </Button>
+              <Button
+                appearance="outline"
+                onClick={handleAddPresetViews}
+                disabled={allStarterViewsAdded && !starterViewsNeedPro}
+                aria-label={starterViewsNeedPro ? 'Add starter views (needs Pro)' : 'Add starter views'}
+                title={allStarterViewsAdded && !starterViewsNeedPro ? 'Morning, Evening and Weekend are already here' : undefined}
+              >
+                <IconSparkles size={16} aria-hidden />
+                <span className={s.labelLong}>Add starter views</span>
+                <span className={s.labelShort}>Starter views</span>
+                {starterViewsNeedPro ? <ProBadge /> : null}
+              </Button>
+              <Button
+                tone="accent"
+                appearance="solid"
+                onClick={handleNewView}
+                aria-label={newViewNeedsPro ? 'New view (needs Pro)' : undefined}
+              >
+                <IconPlus size={16} aria-hidden />
+                New view
+                {newViewNeedsPro ? <ProBadge /> : null}
+              </Button>
+            </div>
+          </header>
+          <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+            <SortableContext items={display.layouts.map((l) => l.id)} strategy={verticalListSortingStrategy}>
+              <ol className={s.viewList} aria-label="Views in display order">
+                {display.layouts.map((layout, index) => (
+                  <SortableViewRow
+                    key={layout.id}
+                    layout={layout}
+                    index={index}
+                    editHref={`/displays/${display.id}/views/${layout.id}`}
+                    onDelete={() => handleDeleteView(layout.id)}
+                    onRename={() => openRenameView(layout.id, layout.name)}
+                    onToggleHidden={() => handleToggleHidden(layout.id)}
+                    onSetIcon={(icon) => handleSetIcon(layout.id, icon)}
                   />
-                </Group>
-                <Group gap="xs">
-                  <Button
-                    variant="light"
-                    leftSection={<IconDeviceTv size={16} />}
-                    onClick={() => openPreview({ displayId: display.displayId, forceRotation: true, colorMode })}
-                  >
-                    Preview Auto-Rotation
+                ))}
+              </ol>
+            </SortableContext>
+          </DndContext>
+        </section>
+      )}
+
+      {shownPage === 'settings' && (
+        <section aria-label="Settings" className={s.settingsPage}>
+          {sectionHeader('Settings', 'How this display looks and behaves on the wall.', {
+            actions: <SaveStatus state={saveState} />,
+          })}
+
+          <div className={s.settings}>
+            <SettingsGroup
+              title="Appearance"
+              description="The display’s own light or dark look. The editor and preview show it the same way; the app follows your own setting in the account menu."
+            >
+              <div className={s.field}>
+                <span id="display-color-mode-label" className={s.settingLabel}>
+                  Display colour mode
+                </span>
+                <SegmentedControl
+                  aria-labelledby="display-color-mode-label"
+                  options={[
+                    { value: 'light', label: 'Light', icon: <IconSun size={16} aria-hidden /> },
+                    { value: 'dark', label: 'Dark', icon: <IconMoon size={16} aria-hidden /> },
+                  ]}
+                  value={colorMode}
+                  onValueChange={(value) => {
+                    if (value !== 'light' && value !== 'dark') return;
+                    setColorMode(display.id, value);
+                    saveConfig({ colorMode: value });
+                  }}
+                />
+              </div>
+            </SettingsGroup>
+
+            <SettingsGroup
+              title="Viewer PIN"
+              description={
+                <span className={s.pinStatus}>
+                  {display.passcodeEnabled ? <IconLock size={16} aria-hidden /> : <IconLockOpen size={16} aria-hidden />}
+                  {display.passcodeEnabled
+                    ? 'A PIN is required to view this display.'
+                    : 'Anyone with the link can view this display.'}
+                </span>
+              }
+            >
+              <form
+                className={s.pinForm}
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  if (pinInput.length === 4) void handleSavePin(pinInput);
+                }}
+              >
+                <PinInput
+                  label={display.passcodeEnabled ? 'New 4-digit PIN' : '4-digit PIN'}
+                  length={4}
+                  value={pinInput}
+                  onValueChange={(val) => {
+                    setPinInput(val);
+                    setPinError(null);
+                  }}
+                  errorMessage={pinError ?? undefined}
+                  className={s.pinInput}
+                />
+                <div className={s.pinActions}>
+                  <Button type="submit" tone="accent" appearance="solid" disabled={pinInput.length !== 4} loading={pinSaving}>
+                    {display.passcodeEnabled ? 'Change PIN' : 'Require PIN'}
                   </Button>
-                  <Button size="xs" variant="default" onClick={handleAddPresetViews}>
-                    Add Preset Views
-                  </Button>
-                  <Button leftSection={<IconPlus size={14} />} size="xs" variant="light" onClick={handleNewView}>
-                    New View
-                  </Button>
-                </Group>
-              </Group>
-              <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-                <SortableContext items={display.layouts.map((l) => l.id)} strategy={verticalListSortingStrategy}>
-                  <Stack gap="xs">
-                    {display.layouts.map((layout) => (
-                      <SortableViewCard
-                        key={layout.id}
-                        layout={layout}
-                        onSelect={() => navigate(`/displays/${display.id}/views/${layout.id}`)}
-                        onDelete={() => handleDeleteView(layout.id)}
-                        onRename={(name) => handleRenameView(layout.id, name)}
-                        onToggleHidden={() => handleToggleHidden(layout.id)}
-                        onSetIcon={(icon) => setLayoutIcon(layout.id, icon)}
-                      />
-                    ))}
-                  </Stack>
-                </SortableContext>
-              </DndContext>
-            </>
+                  {display.passcodeEnabled && (
+                    <Button type="button" tone="danger" appearance="ghost" loading={pinSaving} onClick={() => void handleSavePin(null)}>
+                      Remove PIN
+                    </Button>
+                  )}
+                </div>
+              </form>
+            </SettingsGroup>
+
+            <SettingsGroup title="Rotation">
+              <SwitchSetting
+                label="Rotate through views"
+                description={rotationDescription}
+                checked={display.rotationEnabled}
+                disabled={visibleLayoutCount <= 1}
+                onChange={(checked) => {
+                  setRotationEnabled(checked);
+                  saveConfig({ rotationEnabled: checked });
+                }}
+              />
+              {display.rotationEnabled && visibleLayoutCount > 1 && (
+                <Select
+                  label="Show each view for"
+                  options={INTERVAL_OPTIONS}
+                  value={String(display.rotationIntervalMs)}
+                  onValueChange={(v) => {
+                    if (!v) return;
+                    setRotationIntervalMs(Number(v));
+                    saveConfig({ rotationIntervalMs: Number(v) });
+                  }}
+                  className={s.settingSelect}
+                />
+              )}
+            </SettingsGroup>
+
+            <SettingsGroup
+              title="Alarms"
+              description="Recurring alarms ring on this display with sound. Snooze for 5, 10, or 15 minutes."
+            >
+              <div className={s.embeddedEditor} data-hs-chrome="">
+                <AlarmListEditor
+                  alarms={display.alarms ?? []}
+                  onChange={(next) => {
+                    setAlarms(display.id, next);
+                    setSaveState('saving');
+                    if (alarmsSaveDebounceRef.current) clearTimeout(alarmsSaveDebounceRef.current);
+                    alarmsSaveDebounceRef.current = setTimeout(() => {
+                      saveConfig({ alarms: next });
+                    }, 500);
+                  }}
+                />
+              </div>
+              <SwitchSetting
+                label="Voice commands"
+                description="Say “dismiss” or “snooze” when an alarm rings. The display asks for microphone access (Chrome over HTTPS works best)."
+                checked={display.voiceEnabled ?? false}
+                onChange={(checked) => {
+                  setVoiceEnabled(display.id, checked);
+                  saveConfig({ voiceEnabled: checked });
+                }}
+              />
+            </SettingsGroup>
+
+            <SettingsGroup title="Extras">
+              <SwitchSetting
+                label="Sticky notes"
+                description="Adds a + button for quick floating notes on every view, in the editor and on the display."
+                checked={display.stickyNotesEnabled ?? false}
+                onChange={(checked) => {
+                  setStickyNotesEnabled(display.id, checked);
+                  saveConfig({ stickyNotesEnabled: checked });
+                }}
+              />
+              <SwitchSetting
+                label="Holiday touches"
+                description="Seasonal visuals on matching dates, like St. Patrick’s Day."
+                checked={display.holidayEffectsEnabled ?? false}
+                onChange={(checked) => {
+                  setHolidayEffectsEnabled(display.id, checked);
+                  saveConfig({ holidayEffectsEnabled: checked });
+                }}
+              />
+              {display.holidayEffectsEnabled && (
+                <Select
+                  label="Preview a holiday"
+                  description="Force a holiday look to check it. Auto follows today’s date."
+                  options={[{ value: 'auto', label: 'Auto (today)' }, ...HOLIDAY_PREVIEW_OPTIONS]}
+                  value={display.holidayPreviewId ?? 'auto'}
+                  onValueChange={(value) => {
+                    const nextValue: HolidayId | undefined =
+                      value && value !== 'auto' ? (value as HolidayId) : undefined;
+                    setHolidayPreviewId(display.id, nextValue);
+                    saveConfig({ holidayPreviewId: nextValue });
+                  }}
+                  className={s.settingSelect}
+                />
+              )}
+            </SettingsGroup>
+          </div>
+        </section>
+      )}
+
+      {shownPage === 'theme' && (
+        <section aria-label="Theme">
+          {sectionHeader(
+            'Theme',
+            'Colours, fonts and backgrounds for this display. Create a theme from a preset, edit it, then mark it active.',
+            { actions: <SaveStatus state={saveState} /> },
           )}
-
-          {activePage === 'settings' && (
-            <Stack gap="lg">
-              <section className={classes.section}>
-                <Title order={5} className={classes.sectionTitle} mb="md">Viewer Passcode</Title>
-                <Paper className={classes.settingsCard} p="md" radius="md">
-                  <Stack gap="md">
-                    <Group justify="space-between">
-                      <Stack gap={2}>
-                        <Group gap={6}>
-                          {display.passcodeEnabled
-                            ? <IconLock size={14} />
-                            : <IconLockOpen size={14} />}
-                          <Text size="sm" fw={500}>
-                            {display.passcodeEnabled ? 'Passcode is set' : 'No passcode'}
-                          </Text>
-                        </Group>
-                        <Text size="xs" c="dimmed">
-                          Require a 4-digit PIN before the display can be viewed
-                        </Text>
-                      </Stack>
-                      {display.passcodeEnabled && (
-                        <Button
-                          size="xs"
-                          variant="subtle"
-                          color="red"
-                          loading={pinSaving}
-                          onClick={() => handleSavePin(null)}
-                        >
-                          Remove PIN
-                        </Button>
-                      )}
-                    </Group>
-                    <Stack gap={6}>
-                      <Text size="xs" c="dimmed">
-                        {display.passcodeEnabled ? 'Set a new PIN:' : 'Set a PIN:'}
-                      </Text>
-                      <Group gap="sm" align="flex-start">
-                        <PinInput
-                          length={4}
-                          type="number"
-                          value={pinInput}
-                          onChange={(val) => { setPinInput(val); setPinError(null); }}
-                          error={!!pinError}
-                          placeholder="·"
-                        />
-                        <Button
-                          size="sm"
-                          disabled={pinInput.length !== 4}
-                          loading={pinSaving}
-                          onClick={() => handleSavePin(pinInput)}
-                        >
-                          {display.passcodeEnabled ? 'Change PIN' : 'Enable PIN'}
-                        </Button>
-                      </Group>
-                      {pinError && <Text size="xs" c="red">{pinError}</Text>}
-                    </Stack>
-                  </Stack>
-                </Paper>
-              </section>
-
-              <section className={classes.section}>
-                <Title order={5} className={classes.sectionTitle} mb="md">Sticky Notes</Title>
-                <Paper className={classes.settingsCard} p="md" radius="md">
-                  <Group justify="space-between">
-                    <Stack gap={2}>
-                      <Text size="sm" fw={500}>Enable sticky notes</Text>
-                      <Text size="xs" c="dimmed">
-                        Show a "+" button to add floating notes on each view - visible in editor and kiosk mode
-                      </Text>
-                    </Stack>
-                    <Switch
-                      checked={display.stickyNotesEnabled ?? false}
-                      onChange={(e) => {
-                        setStickyNotesEnabled(display.id, e.currentTarget.checked);
-                        saveConfig({ stickyNotesEnabled: e.currentTarget.checked });
-                      }}
-                    />
-                  </Group>
-                </Paper>
-              </section>
-
-              <section className={classes.section}>
-                <Title order={5} className={classes.sectionTitle} mb="md">Alarms</Title>
-                <Paper className={classes.settingsCard} p="md" radius="md">
-                  <Stack gap="sm">
-                    <Text size="xs" c="dimmed">
-                      Recurring alarms ring on this display with sound. Snooze for 5, 10, or 15 minutes.
-                    </Text>
-                    <AlarmListEditor
-                      alarms={display.alarms ?? []}
-                      onChange={(next) => {
-                        setAlarms(display.id, next);
-                        if (alarmsSaveDebounceRef.current) clearTimeout(alarmsSaveDebounceRef.current);
-                        alarmsSaveDebounceRef.current = setTimeout(() => {
-                          saveConfig({ alarms: next });
-                        }, 500);
-                      }}
-                    />
-                    <Group justify="space-between" mt="xs">
-                      <Stack gap={2}>
-                        <Text size="sm" fw={500}>Enable voice commands</Text>
-                        <Text size="xs" c="dimmed">
-                          Say dismiss or snooze when an alarm rings. Microphone permission is requested
-                          on this display (Chromium / HTTPS recommended).
-                        </Text>
-                      </Stack>
-                      <Switch
-                        checked={display.voiceEnabled ?? false}
-                        onChange={(e) => {
-                          setVoiceEnabled(display.id, e.currentTarget.checked);
-                          saveConfig({ voiceEnabled: e.currentTarget.checked });
-                        }}
-                      />
-                    </Group>
-                  </Stack>
-                </Paper>
-              </section>
-
-              <section className={classes.section}>
-                <Title order={5} className={classes.sectionTitle} mb="md">Holiday Effects</Title>
-                <Paper className={classes.settingsCard} p="md" radius="md">
-                  <Stack gap="md">
-                    <Group justify="space-between">
-                      <Stack gap={2}>
-                        <Text size="sm" fw={500}>Enable holiday UI</Text>
-                        <Text size="xs" c="dimmed">
-                          Show holiday-specific visuals on matching dates (for example: St. Patrick&apos;s Day)
-                        </Text>
-                      </Stack>
-                      <Switch
-                        checked={display.holidayEffectsEnabled ?? false}
-                        onChange={(e) => {
-                          setHolidayEffectsEnabled(display.id, e.currentTarget.checked);
-                          saveConfig({ holidayEffectsEnabled: e.currentTarget.checked });
-                        }}
-                      />
-                    </Group>
-                    <Stack gap={2}>
-                      <Text size="sm" fw={500}>Preview holiday</Text>
-                      <Text size="xs" c="dimmed">
-                        Force a holiday theme for testing. Auto uses the current date.
-                      </Text>
-                    </Stack>
-                    <Select
-                      data={[
-                        { value: 'auto', label: 'Auto (today)' },
-                        ...HOLIDAY_PREVIEW_OPTIONS,
-                      ]}
-                      value={display.holidayPreviewId ?? 'auto'}
-                      onChange={(value) => {
-                        const nextValue: HolidayId | undefined =
-                          value && value !== 'auto' ? (value as HolidayId) : undefined;
-                        setHolidayPreviewId(display.id, nextValue);
-                        saveConfig({ holidayPreviewId: nextValue });
-                      }}
-                      size="sm"
-                    />
-                  </Stack>
-                </Paper>
-              </section>
-
-              <section className={classes.section}>
-                <Title order={5} className={classes.sectionTitle} mb="md">Auto-Rotate</Title>
-                <Paper className={classes.settingsCard} p="md" radius="md">
-                  <Stack gap="md">
-                    <Group justify="space-between">
-                      <Stack gap={2}>
-                        <Text size="sm" fw={500}>Auto-rotate views</Text>
-                        <Text size="xs" c="dimmed">Automatically cycle through visible views</Text>
-                      </Stack>
-                      <Switch
-                        checked={display.rotationEnabled}
-                        disabled={visibleLayoutCount <= 1}
-                        onChange={(e) => {
-                          setRotationEnabled(e.currentTarget.checked);
-                          saveConfig({ rotationEnabled: e.currentTarget.checked });
-                        }}
-                      />
-                    </Group>
-                    {display.rotationEnabled && visibleLayoutCount > 1 && (
-                      <Select
-                        label="Rotation interval"
-                        data={INTERVAL_OPTIONS}
-                        value={String(display.rotationIntervalMs)}
-                        onChange={(v) => {
-                          if (!v) return;
-                          setRotationIntervalMs(Number(v));
-                          saveConfig({ rotationIntervalMs: Number(v) });
-                        }}
-                        size="sm"
-                      />
-                    )}
-                    {visibleLayoutCount <= 1 && (
-                      <Text size="xs" c="dimmed">
-                        {display.layouts.length <= 1
-                          ? 'Add a second view to enable auto-rotation'
-                          : 'Show at least two views to enable auto-rotation'}
-                      </Text>
-                    )}
-                  </Stack>
-                </Paper>
-              </section>
-            </Stack>
-          )}
-
-          {activePage === 'theme' && (
-            <section className={`${classes.section} ${classes.themeSection}`}>
+          <div className={s.themeSection} data-hs-chrome="">
+            <Suspense fallback={<PanelSkeleton label="Loading the theme editor" />}>
               <ThemeEditor
                 documents={display.themes}
                 activeThemeDocumentId={display.activeThemeId}
@@ -1006,11 +1207,11 @@ export function DisplayDetailPage() {
                   saveConfig({ themes, activeThemeId });
                 }}
               />
-            </section>
-          )}
+            </Suspense>
+          </div>
         </section>
-      </main>
-    </div>
+      )}
+    </ManagementShell>
     </>
   );
 }

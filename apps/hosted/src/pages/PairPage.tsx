@@ -1,14 +1,16 @@
 import { useEffect, useState, useCallback } from 'react';
-import { Center, Paper, Title, Text, Stack, Code, Loader, CopyButton, Tooltip, ActionIcon, Box } from '@mantine/core';
-import { IconLayoutDashboard, IconCopy, IconCheck } from '@tabler/icons-react';
+import { Button, Spinner, StatusDot, Text } from '@var-ui/react';
+import { IconDeviceTablet, IconRefresh } from '@tabler/icons-react';
 import { apiClient, ApiError } from '../services/apiClient';
 import { persistDisplayId } from '../displayPersistence';
 import type { PairCreateResponse, PairStatusResponse } from '../types/api';
-import classes from './PairPage.module.css';
+import { kioskCard as s } from './KioskCard.styles';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 const POLL_INTERVAL_MS = 2000;
 
 export function PairPage() {
+  useDocumentTitle('Pair this tablet');
   const [code, setCode] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<'loading' | 'pending' | 'expired' | 'claimed'>('loading');
@@ -63,82 +65,54 @@ export function PairPage() {
 
   if (status === 'loading' && !code) {
     return (
-      <div className={classes.root}>
-        <Center className={classes.center}>
-          <Stack align="center" gap="md">
-            <Loader size="lg" />
-            <Text c="dimmed">Getting pairing code…</Text>
-          </Stack>
-        </Center>
-      </div>
+      <main className={s.screen} data-color-mode="dark">
+        <div className={s.card} aria-busy="true">
+          <Spinner size="lg" label="Getting a pairing code" />
+          <Text tone="secondary">Getting a pairing code…</Text>
+        </div>
+      </main>
     );
   }
 
   if (status === 'expired' || error) {
     return (
-      <div className={classes.root}>
-        <Center className={classes.center}>
-          <Paper className={classes.card} p="xl" radius="lg">
-            <Stack align="center" gap="lg">
-              <div className={classes.iconWrap}>
-                <IconLayoutDashboard size={48} />
-              </div>
-              <Title order={2} className={classes.title}>
-                {error ? 'Something went wrong' : 'Code expired'}
-              </Title>
-              <Text c="dimmed" size="sm" ta="center">
-                {error ?? 'Refresh the page to get a new pairing code.'}
-              </Text>
-              <Text
-                component="button"
-                size="sm"
-                c="indigo"
-                style={{ cursor: 'pointer', background: 'none', border: 'none' }}
-                onClick={() => window.location.reload()}
-              >
-                Refresh page
-              </Text>
-            </Stack>
-          </Paper>
-        </Center>
-      </div>
+      <main className={s.screen} data-color-mode="dark">
+        <div className={s.card}>
+          <span className={s.iconBadge}>
+            <IconDeviceTablet size={30} stroke={1.5} aria-hidden />
+          </span>
+          <h1 className={s.title}>{error ? 'We couldn’t get a code' : 'This code expired'}</h1>
+          <Text tone="secondary" className={s.body}>
+            {error ?? 'Codes last 15 minutes. Get a fresh one and enter it in Homeslate.'}
+          </Text>
+          <Button tone="accent" appearance="solid" size="lg" onClick={() => window.location.reload()} className={s.fullWidth}>
+            <IconRefresh size={18} aria-hidden />
+            Get a new code
+          </Button>
+        </div>
+      </main>
     );
   }
 
   return (
-    <div className={classes.root}>
-      <Center className={classes.center}>
-        <Paper className={classes.card} p="xl" radius="lg">
-          <Stack align="center" gap="lg">
-            <div className={classes.iconWrap}>
-              <IconLayoutDashboard size={48} />
-            </div>
-            <Title order={2} className={classes.title}>
-              Register this display
-            </Title>
-            <Text c="dimmed" size="sm" ta="center">
-              Open the management app, go to Your Displays, and enter this code to link this device.
-            </Text>
-            <Box className={classes.codeWrap}>
-              <Code className={classes.code} block>
-                {code}
-              </Code>
-              <CopyButton value={code ?? ''} timeout={2000}>
-                {({ copied, copy }) => (
-                  <Tooltip label={copied ? 'Copied!' : 'Copy code'} withArrow>
-                    <ActionIcon variant="subtle" size="lg" onClick={copy}>
-                      {copied ? <IconCheck size={18} /> : <IconCopy size={18} />}
-                    </ActionIcon>
-                  </Tooltip>
-                )}
-              </CopyButton>
-            </Box>
-            <Text size="xs" c="dimmed" ta="center">
-              This code expires in 15 minutes. Waiting for you to register…
-            </Text>
-          </Stack>
-        </Paper>
-      </Center>
-    </div>
+    <main className={s.screen} data-color-mode="dark">
+      <div className={s.card} data-wide="">
+        <span className={s.iconBadge}>
+          <IconDeviceTablet size={30} stroke={1.5} aria-hidden />
+        </span>
+        <h1 className={s.title}>Pair this tablet</h1>
+        <Text tone="secondary" className={s.body}>
+          On your phone or laptop, open Homeslate → Displays → <strong>Pair a tablet</strong>, and enter:
+        </Text>
+        {/* Read off the wall from across the room; nothing to copy on the tablet itself. */}
+        <p className={s.code} aria-label={`Pairing code ${code?.split('').join(' ')}`}>
+          {code}
+        </p>
+        <p className={s.status} role="status">
+          <StatusDot tone="accent" pulse aria-hidden />
+          Waiting for you to enter the code · expires in 15 minutes
+        </p>
+      </div>
+    </main>
   );
 }

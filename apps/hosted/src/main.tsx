@@ -1,5 +1,9 @@
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
+// Register every style module up front (theme, document globals, Var UI base/reset). In production
+// these are already in the extracted CSS and the client sheet is a no-op; in dev (runtime mode)
+// this is what injects them.
+import './typestyles-entry'
 import App from './App.tsx'
 import { initSentryClient, Sentry } from './monitoring/sentry.client'
 import { registerPwaUpdates } from './pwaUpdate'

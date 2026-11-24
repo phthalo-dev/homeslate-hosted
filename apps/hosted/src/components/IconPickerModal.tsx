@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react';
-import { Modal, TextInput, SimpleGrid, Tooltip, ActionIcon, Text, Group, Button, ScrollArea, UnstyledButton } from '@mantine/core';
+import { Button, Dialog, SearchInput, Stack, Text, UnstyledButton } from '@var-ui/react';
+import { dialogAutoFocus } from './dialogFocus';
 import * as TablerIcons from '@tabler/icons-react';
+import { iconPicker as s } from './IconPickerModal.styles';
 
 // Curated set of icons relevant for view indicators
 const CURATED_ICON_NAMES = [
@@ -45,6 +47,10 @@ function getIconComponent(name: string): IconComponent | null {
   return null;
 }
 
+function iconLabel(name: string): string {
+  return name.replace(/^Icon/, '').replace(/([A-Z0-9]+)/g, ' $1').trim();
+}
+
 interface IconPickerModalProps {
   opened: boolean;
   onClose: () => void;
@@ -75,68 +81,61 @@ export function IconPickerModal({ opened, onClose, currentIcon, onSelect }: Icon
   };
 
   return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title="Choose view icon"
+    <Dialog
+      open={opened}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title="Choose a view icon"
+      description="Shown in the view switcher on the display."
       size="lg"
     >
-      <TextInput
-        placeholder="Search icons…"
-        value={query}
-        onChange={(e) => setQuery(e.currentTarget.value)}
-        mb="sm"
-        autoFocus
-      />
-      <ScrollArea h={380} type="scroll">
-        <SimpleGrid cols={8} spacing={4}>
-          {displayedIcons.map((name) => {
-            const Ic = getIconComponent(name);
-            if (!Ic) return null;
-            const label = name.replace(/^Icon/, '').replace(/([A-Z])/g, ' $1').trim();
-            const isActive = name === currentIcon;
-            return (
-              <Tooltip key={name} label={label} position="top" withArrow openDelay={400}>
-                <UnstyledButton
-                  onClick={() => handleSelect(name)}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    width: '100%',
-                    aspectRatio: '1',
-                    borderRadius: 6,
-                    background: isActive ? 'var(--mantine-color-blue-6)' : 'transparent',
-                    color: isActive ? 'white' : 'inherit',
-                    transition: 'background 0.15s',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (!isActive) (e.currentTarget as HTMLElement).style.background = 'var(--mantine-color-default-hover)';
-                  }}
-                  onMouseLeave={(e) => {
-                    if (!isActive) (e.currentTarget as HTMLElement).style.background = 'transparent';
-                  }}
-                >
-                  <Ic size={22} stroke={1.5} />
-                </UnstyledButton>
-              </Tooltip>
-            );
-          })}
-          {displayedIcons.length === 0 && (
-            <Text c="dimmed" size="sm" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '2rem 0' }}>
-              No icons found for "{query}"
+      <Stack gap="md">
+        <SearchInput
+          aria-label="Search icons"
+          placeholder="Search 4,000+ icons — try “kitchen” or “sun”"
+          value={query}
+          onValueChange={setQuery}
+          ref={dialogAutoFocus}
+        />
+        <div className={s.scroller}>
+          {displayedIcons.length === 0 ? (
+            <Text tone="secondary" size="sm" className={s.empty}>
+              No icons match “{query}”.
             </Text>
+          ) : (
+            <div className={s.grid} role="group" aria-label={query ? 'Search results' : 'Suggested icons'}>
+              {displayedIcons.map((name) => {
+                const Ic = getIconComponent(name);
+                if (!Ic) return null;
+                const label = iconLabel(name);
+                const isActive = name === currentIcon;
+                return (
+                  <UnstyledButton
+                    key={name}
+                    className={s.option}
+                    data-active={isActive || undefined}
+                    aria-pressed={isActive}
+                    aria-label={label}
+                    title={label}
+                    onClick={() => handleSelect(name)}
+                  >
+                    <Ic size={22} stroke={1.5} />
+                  </UnstyledButton>
+                );
+              })}
+            </div>
           )}
-        </SimpleGrid>
-      </ScrollArea>
-      <Group justify="space-between" mt="sm">
-        <Button variant="subtle" color="gray" size="xs" onClick={handleClear} disabled={!currentIcon}>
-          Remove icon
-        </Button>
-        <ActionIcon variant="subtle" onClick={onClose} aria-label="Cancel">
-          <TablerIcons.IconX size={16} />
-        </ActionIcon>
-      </Group>
-    </Modal>
+        </div>
+        <Dialog.Actions>
+          <Button type="button" tone="danger" appearance="ghost" onClick={handleClear} disabled={!currentIcon}>
+            Remove icon
+          </Button>
+          <Button type="button" onClick={onClose}>
+            Done
+          </Button>
+        </Dialog.Actions>
+      </Stack>
+    </Dialog>
   );
 }

@@ -2,9 +2,11 @@
 import { fileURLToPath } from 'node:url'
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
+import typestyles from '@typestyles/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { uiFixtures } from './dev/uiFixtures'
 
-export default defineConfig(() => ({
+export default defineConfig(({ command }) => ({
   root: fileURLToPath(new URL('.', import.meta.url)),
   publicDir: fileURLToPath(new URL('../../public', import.meta.url)),
   build: {
@@ -15,6 +17,7 @@ export default defineConfig(() => ({
         manualChunks: {
           'vendor-react': ['react', 'react-dom'],
           'vendor-mantine': ['@mantine/core', '@mantine/hooks', '@mantine/dates'],
+          'vendor-varui': ['@var-ui/react', 'react-aria-components'],
           'vendor-icons': ['@tabler/icons-react'],
           'vendor-dnd': ['@dnd-kit/core', '@dnd-kit/sortable', '@dnd-kit/utilities'],
           'vendor-grid': ['react-grid-layout'],
@@ -25,7 +28,7 @@ export default defineConfig(() => ({
   },
   server: {
     host: true,
-    port: 5173,
+    port: Number(process.env.HOMESLATE_DEV_PORT ?? 5173),
     strictPort: true,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin-allow-popups',
@@ -40,6 +43,15 @@ export default defineConfig(() => ({
   },
   plugins: [
     react(),
+    // Var UI + app styles: runtime injection with HMR in dev, extracted static CSS on build.
+    // `runtime` in dev skips the extracted /typestyles.css link, which goes stale and keeps
+    // deleted declarations alive until restart (phthalo-dev/typestyles#386).
+    typestyles({
+      extract: { modules: ['src/typestyles-entry.ts'] },
+      mode: command === 'serve' ? 'runtime' : 'build',
+    }),
+    // Dev-only fake session + in-memory API: HOMESLATE_UI_FIXTURES=1 npm run dev
+    ...(process.env.HOMESLATE_UI_FIXTURES === '1' ? [uiFixtures()] : []),
     VitePWA({
       mode: 'development',
       registerType: 'prompt',

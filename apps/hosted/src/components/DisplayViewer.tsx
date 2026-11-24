@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { PinInput, Stack, Text, Button } from '@mantine/core';
+import { Button, PinInput, Text } from '@var-ui/react';
 import { IconLock } from '@tabler/icons-react';
 import { useWakeLock } from '../hooks/useWakeLock';
 import { DisplayProvider } from '../contexts/DisplayContext';
@@ -12,7 +12,8 @@ import type { NotesPatchRequest, TodosPatchRequest } from '../types/api';
 import { Display } from '@homeslate/display';
 import { displayRecordToDocument } from '../displayDocumentBridge';
 import { PwaUpdateToast } from './PwaUpdateToast';
-import classes from './DisplayViewer.module.css';
+import { pinScreen as ps } from './DisplayViewer.styles';
+import { setDisplaySurfaceScheme } from '../ui/displaySurfaceScheme';
 
 interface DisplayConfig {
   layouts: DashboardLayout[];
@@ -182,6 +183,13 @@ export function DisplayViewer({
     };
   }, [schemaDocument, viewerNotesByLayout, viewerTodoItemsByKey]);
 
+  // This viewer fills the page (wall display or in-app preview): Mantine takes its scheme.
+  const surfaceScheme: ColorMode = colorMode ?? config?.colorMode ?? 'dark';
+  useEffect(() => {
+    setDisplaySurfaceScheme(surfaceScheme);
+  }, [surfaceScheme]);
+  useEffect(() => () => setDisplaySurfaceScheme(null), []);
+
   const lastDocumentRef = useRef<DisplayDocument | null>(null);
   // eslint-disable-next-line react-hooks/refs -- keeps the ref current for edits that land in the same tick
   lastDocumentRef.current = mergedDocument;
@@ -229,36 +237,48 @@ export function DisplayViewer({
     };
 
     return (
-      <div className={classes.pinScreen}>
+      <div className={ps.screen} data-color-mode="dark">
         <PwaUpdateToast />
-        <Stack align="center" gap="lg">
-          <IconLock size={40} opacity={0.7} />
-          <Text size="xl" fw={600}>Enter Display PIN</Text>
+        <form
+          className={ps.panel}
+          onSubmit={(event) => {
+            event.preventDefault();
+            handleSubmit(pinInput);
+          }}
+        >
+          <span className={ps.lock}>
+            <IconLock size={28} aria-hidden />
+          </span>
+          <h1 className={ps.title}>This display is locked</h1>
+          <Text tone="secondary" className={ps.hint}>
+            Enter the 4-digit PIN set by the display’s owner.
+          </Text>
           <PinInput
+            aria-label="Display PIN"
             length={4}
-            type="number"
+            size="lg"
             value={pinInput}
-            onChange={(val) => {
+            onValueChange={(val) => {
               setPinInput(val);
               setPinError(false);
             }}
             onComplete={(val) => handleSubmit(val)}
-            error={pinError}
-            placeholder="·"
-            size="xl"
+            errorMessage={pinError ? 'That PIN didn’t match. Try again.' : undefined}
             autoFocus
+            className={ps.pin}
           />
-          {pinError && (
-            <Text size="sm" c="red">Incorrect PIN. Please try again.</Text>
-          )}
           <Button
-            onClick={() => handleSubmit(pinInput)}
+            type="submit"
+            tone="accent"
+            appearance="solid"
+            size="lg"
             disabled={pinInput.length !== 4 || pinVerifying}
             loading={pinVerifying}
+            className={ps.unlock}
           >
             Unlock
           </Button>
-        </Stack>
+        </form>
       </div>
     );
   }

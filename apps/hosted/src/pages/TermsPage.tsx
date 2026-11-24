@@ -1,14 +1,18 @@
 import { Link } from 'react-router-dom';
 import { PublicLayout } from './PublicLayout';
-import classes from './PrivacyPage.module.css';
+import { Prose, Text } from '@var-ui/react';
+import { legalPage as s } from './PublicLayout.styles';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 export function TermsPage() {
+  useDocumentTitle('Terms of Service');
   return (
     <PublicLayout>
-      <article className={classes.article}>
-        <p className={classes.eyebrow}>Homeslate</p>
-        <h1>Terms of Service</h1>
-        <p className={classes.updated}>Last updated September 3, 2026</p>
+      <article className={s.article}>
+        <Text eyebrow size="sm" weight="semibold" className={s.eyebrow}>Homeslate</Text>
+        <h1 className={s.title}>Terms of Service</h1>
+        <Text tone="secondary" size="sm" className={s.updated}>Last updated September 3, 2026</Text>
+        <Prose density="spacious" className={s.body}>
         <p>
           These terms govern use of the hosted Homeslate app at{' '}
           <a href="https://homeslate.dev">homeslate.dev</a>. By signing in or
@@ -68,7 +72,7 @@ export function TermsPage() {
         <p>
           You keep rights to the display layouts, notes, photos, and other
           material you put in Homeslate. You grant us permission to store and
-          show that material so the product can work — including on devices you
+          show that material so the product can work&nbsp;— including on devices you
           pair and for people you invite. How we handle Google user data is in
           the <Link to="/privacy">Privacy Policy</Link>.
         </p>
@@ -96,6 +100,7 @@ export function TermsPage() {
           <Link to="/terms">homeslate.dev/terms</Link>. Email{' '}
           <a href="mailto:support@homeslate.dev">support@homeslate.dev</a>.
         </p>
+        </Prose>
       </article>
     </PublicLayout>
   );
