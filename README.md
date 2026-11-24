@@ -22,7 +22,12 @@ npm run dev
 
 # Full stack: Vite + Netlify functions on :8888 (recommended)
 npm run dev:netlify
+
+# UI only, with a fake signed-in owner and in-memory /api (no Google/Neon needed)
+HOMESLATE_UI_FIXTURES=1 npm run dev
 ```
+
+In fixtures mode visit `/?as=guest` to browse signed out and `/?as=owner` to sign back in. Set `HOMESLATE_DEV_PORT` if 5173 is taken.
 
 Open **http://localhost:8888** when using `dev:netlify`.
 
@@ -119,7 +124,9 @@ After changing **`VITE_*`** vars, trigger a new deploy (they are build-time only
 
 ## Tech stack
 
-- React 19, Vite 7, TypeScript, Mantine 8
+- React 19, Vite 7, TypeScript
+- UI: [Var UI](https://var-ui.dev) components + [TypeStyles](https://typestyles.dev) (CSS-in-TS, extracted to static CSS on build — every `*.styles.ts` must be imported from `apps/hosted/src/typestyles-entry.ts`)
+- Mantine 8 only for the `@homeslate/*` editor, display, and widget packages
 - Netlify Functions, Neon Postgres, Drizzle ORM
 - Google Identity Services, Stripe Checkout + Portal
 - PWA (service worker) for wall displays

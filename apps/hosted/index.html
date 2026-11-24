@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" class="theme-var-ui-homeslate">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/icon.svg" />
@@ -25,10 +25,64 @@
     <meta name="apple-mobile-web-app-title" content="Homeslate" />
     <link rel="apple-touch-icon" href="/icons/icon-192.png" />
 
+    <!-- Public Sans is the UI face; the rest are display-theme presets. -->
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Public+Sans:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400;1,600&family=Outfit:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700&family=Plus+Jakarta+Sans:wght@300;400;500;600;700&family=Nunito:wght@300;400;500;600;700&family=Sora:wght@300;400;500;600;700&family=JetBrains+Mono:wght@300;400;500&family=Space+Mono:wght@400;700&display=swap"
+    />
+
     <title>Homeslate</title>
+
+    <!--
+      Before first paint: apply the stored light/dark pin (DesignSystemProvider storageKey
+      "homeslate-color-mode"; "system" or nothing follows the OS) and paint the app background,
+      so no route flashes a grey or wrong-mode page while the bundle loads.
+    -->
+    <script>
+      (function () {
+        try {
+          var mode = localStorage.getItem('homeslate-color-mode');
+          var path = location.pathname;
+          var isPublic = path === '/' || path === '/privacy' || path === '/terms' || path === '/pair';
+          if (isPublic) mode = 'dark';
+          if (mode === 'light' || mode === 'dark') document.documentElement.setAttribute('data-color-mode', mode);
+        } catch (e) {}
+      })();
+    </script>
+    <style>
+      html, body { margin: 0; background: oklch(0.155 0.01 262); color-scheme: dark; }
+      @media (prefers-color-scheme: light) {
+        html:not([data-color-mode='dark']), html:not([data-color-mode='dark']) body { background: oklch(0.985 0.003 250); color-scheme: light; }
+      }
+      html[data-color-mode='light'], html[data-color-mode='light'] body { background: oklch(0.985 0.003 250); color-scheme: light; }
+      .hs-boot { display: grid; place-items: center; height: 100dvh; }
+      .hs-boot__stack { display: grid; justify-items: center; gap: 16px; }
+      .hs-boot__mark { fill: #f4f5f6; }
+      .hs-boot__accent { fill: #22aec2; }
+      .hs-boot__spinner { width: 20px; height: 20px; border-radius: 50%; border: 2px solid rgba(127, 137, 150, 0.3); border-top-color: #22aec2; animation: hs-boot-spin 0.8s linear infinite; }
+      @media (prefers-color-scheme: light) { html:not([data-color-mode='dark']) .hs-boot__mark { fill: #11181d; } html:not([data-color-mode='dark']) .hs-boot__accent { fill: #0b9cae; } }
+      html[data-color-mode='light'] .hs-boot__mark { fill: #11181d; }
+      html[data-color-mode='light'] .hs-boot__accent { fill: #0b9cae; }
+      @keyframes hs-boot-spin { to { transform: rotate(360deg); } }
+      @media (prefers-reduced-motion: reduce) { .hs-boot__spinner { animation-duration: 2.4s; } }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="hs-boot" role="status" aria-label="Loading Homeslate">
+        <div class="hs-boot__stack">
+          <svg width="32" height="32" viewBox="0 0 32 32" aria-hidden="true">
+            <rect class="hs-boot__mark" x="2" y="2" width="6.33" height="28" rx="1.5" />
+            <rect class="hs-boot__accent" x="12.83" y="2" width="6.33" height="11.75" rx="1.5" />
+            <rect class="hs-boot__mark" x="12.83" y="18.25" width="6.33" height="11.75" rx="1.5" />
+            <rect class="hs-boot__mark" x="23.67" y="2" width="6.33" height="28" rx="1.5" />
+          </svg>
+          <div class="hs-boot__spinner"></div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

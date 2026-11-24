@@ -1,14 +1,18 @@
 import { Link } from 'react-router-dom';
 import { PublicLayout } from './PublicLayout';
-import classes from './PrivacyPage.module.css';
+import { Prose, Text } from '@var-ui/react';
+import { legalPage as s } from './PublicLayout.styles';
+import { useDocumentTitle } from '../hooks/useDocumentTitle';
 
 export function PrivacyPage() {
+  useDocumentTitle('Privacy Policy');
   return (
     <PublicLayout>
-      <article className={classes.article}>
-        <p className={classes.eyebrow}>Homeslate</p>
-        <h1>Privacy Policy</h1>
-        <p className={classes.updated}>Last updated September 3, 2026</p>
+      <article className={s.article}>
+        <Text eyebrow size="sm" weight="semibold" className={s.eyebrow}>Homeslate</Text>
+        <h1 className={s.title}>Privacy Policy</h1>
+        <Text tone="secondary" size="sm" className={s.updated}>Last updated September 3, 2026</Text>
+        <Prose density="spacious" className={s.body}>
         <p>
           This policy describes how Homeslate (<a href="https://homeslate.dev">homeslate.dev</a>)
           handles information when you use the hosted app. It is meant to
@@ -64,7 +68,7 @@ export function PrivacyPage() {
             Homeslate Pro, we store your plan (<code>free</code> or{' '}
             <code>pro</code>), Stripe customer and subscription identifiers,
             subscription status, and the price you selected. We do not store
-            full credit card numbers — payment details are handled by{' '}
+            full credit card numbers&nbsp;— payment details are handled by{' '}
             <a href="https://stripe.com">Stripe</a>.
           </li>
         </ul>
@@ -183,7 +187,7 @@ export function PrivacyPage() {
           Account records, tokens, and display configuration are stored in
           our hosted database. Photos you upload or pick are stored in object
           storage used by the app. Weather, news, and stocks widgets call
-          third-party APIs with locations or symbols you configure — not with
+          third-party APIs with locations or symbols you configure&nbsp;— not with
           your Google account.
         </p>
 
@@ -217,6 +221,7 @@ export function PrivacyPage() {
           The current policy is always at{' '}
           <Link to="/privacy">homeslate.dev/privacy</Link>.
         </p>
+        </Prose>
       </article>
     </PublicLayout>
   );

@@ -1,9 +1,0 @@
-.pinScreen {
-  width: 100vw;
-  height: 100vh;
-  background: var(--mantine-color-body);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--mantine-color-text);
-}

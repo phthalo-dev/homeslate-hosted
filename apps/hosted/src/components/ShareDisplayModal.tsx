@@ -1,94 +1,116 @@
-import {
-  Modal,
-  Stack,
-  Text,
-  Group,
-  CopyButton,
-  Code,
-  Divider,
-  ActionIcon,
-  Tooltip,
-  Box,
-} from '@mantine/core';
+import { useEffect, useRef, useState } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-import { IconCopy, IconCheck, IconExternalLink } from '@tabler/icons-react';
+import { IconCheck, IconCopy, IconExternalLink, IconLock } from '@tabler/icons-react';
+import { Button, CopyButton, Dialog, InputGroup, InputGroupInput, Stack, Text } from '@var-ui/react';
+import { shareDisplay as s } from './ShareDisplayModal.styles';
+import { markTabletStepDone } from './GetStarted';
 
 interface Props {
   opened: boolean;
   onClose: () => void;
   displayId: string;
   displayName: string;
+  /** The display asks for a PIN before showing anything. */
+  passcodeEnabled?: boolean;
 }
 
-export function ShareDisplayModal({ opened, onClose, displayId, displayName }: Props) {
+/** How to copy a selected link by hand on this device. */
+function manualCopyHint(): string {
+  if (typeof window === 'undefined') return 'Copy the selected link.';
+  if (window.matchMedia?.('(pointer: coarse)').matches) return 'Long-press the link above to copy it.';
+  const nav = navigator as Navigator & { userAgentData?: { platform?: string } };
+  const platform = nav.userAgentData?.platform || navigator.platform || navigator.userAgent;
+  return /mac|iphone|ipad/i.test(platform) ? 'The link is selected — press ⌘C to copy it.' : 'The link is selected — press Ctrl+C to copy it.';
+}
+
+export function ShareDisplayModal({ opened, onClose, displayId, displayName, passcodeEnabled = false }: Props) {
   const url = `${window.location.origin}/?display=${displayId}`;
+  const linkRef = useRef<HTMLInputElement>(null);
+  const [copyFailed, setCopyFailed] = useState(false);
+
+  // Opening the link/QR counts as "put it on a tablet" for the getting-started checklist.
+  useEffect(() => {
+    if (opened) markTabletStepDone();
+  }, [opened]);
+
+  // Clipboard access can be blocked (permissions, embedded browsers): fall back to a
+  // selected field and the keyboard shortcut.
+  const selectLink = () => {
+    linkRef.current?.focus();
+    linkRef.current?.select();
+  };
 
   return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title={`Share "${displayName}"`}
-      centered
-      size="sm"
+    <Dialog
+      open={opened}
+      onOpenChange={(open) => {
+        if (!open) {
+          setCopyFailed(false);
+          onClose();
+        }
+      }}
+      title={`Open “${displayName}” on a tablet`}
+      description="Scan the code with the tablet's camera, or paste the link into its browser."
+      size="xl"
     >
       <Stack gap="lg">
-        <Stack gap="xs" align="center">
-          <Text size="sm" c="dimmed">Scan to open on a display device</Text>
-          <Box
-            style={{
-              background: 'white',
-              padding: 12,
-              borderRadius: 8,
-              display: 'inline-block',
-              lineHeight: 0,
-            }}
-          >
-            <QRCodeSVG value={url} size={200} />
-          </Box>
-        </Stack>
-
-        <Divider label="or copy the URL" labelPosition="center" />
-
-        <Group gap="xs" wrap="nowrap">
-          <Code
-            style={{
-              flex: 1,
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-              display: 'block',
-              fontSize: 11,
-            }}
-          >
-            {url}
-          </Code>
-          <CopyButton value={url} timeout={2000}>
-            {({ copied, copy }) => (
-              <Tooltip label={copied ? 'Copied!' : 'Copy URL'} withArrow>
-                <ActionIcon
-                  variant={copied ? 'filled' : 'default'}
-                  color={copied ? 'teal' : undefined}
-                  onClick={copy}
-                  size="lg"
-                  flex="0 0 auto"
-                >
-                  {copied ? <IconCheck size={16} /> : <IconCopy size={16} />}
-                </ActionIcon>
-              </Tooltip>
+        <figure className={s.qrFrame}>
+          <div className={s.qr}>
+            <QRCodeSVG value={url} size={184} marginSize={0} title={`QR code for ${displayName}`} />
+          </div>
+          <figcaption className={s.caption}>
+            {passcodeEnabled ? (
+              <Text as="span" size="xs" tone="secondary" className={s.captionLine}>
+                <IconLock size={12} aria-hidden />
+                The tablet asks for this display’s PIN before showing it
+              </Text>
+            ) : (
+              <Text as="span" size="xs" tone="secondary">
+                Anyone with this link can view the display
+              </Text>
             )}
-          </CopyButton>
-          <Tooltip label="Open in new tab" withArrow>
-            <ActionIcon
-              variant="default"
-              size="lg"
-              flex="0 0 auto"
-              onClick={() => window.open(url, '_blank')}
+          </figcaption>
+        </figure>
+
+        <div className={s.linkBlock}>
+          <InputGroup label="Display link" className={s.linkField}>
+            <InputGroupInput
+              ref={linkRef}
+              value={url}
+              readOnly
+              aria-label="Display link"
+              aria-describedby={copyFailed ? 'share-copy-fallback' : undefined}
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </InputGroup>
+          <div className={s.linkActions}>
+            <CopyButton
+              value={url}
+              onCopied={() => setCopyFailed(false)}
+              onCopyError={() => {
+                setCopyFailed(true);
+                selectLink();
+              }}
             >
-              <IconExternalLink size={16} />
-            </ActionIcon>
-          </Tooltip>
-        </Group>
+              {({ copied, copy }) => (
+                <Button onClick={copy}>
+                  {copied ? <IconCheck size={16} aria-hidden /> : <IconCopy size={16} aria-hidden />}
+                  {copied ? 'Link copied' : 'Copy link'}
+                </Button>
+              )}
+            </CopyButton>
+            <Button appearance="ghost" onClick={() => window.open(url, '_blank', 'noopener')}>
+              <IconExternalLink size={16} aria-hidden />
+              Open in a new tab
+            </Button>
+          </div>
+          {copyFailed ? (
+            <Text id="share-copy-fallback" size="sm" tone="secondary" role="status">
+              Couldn’t copy automatically. {manualCopyHint()}
+            </Text>
+          ) : null}
+        </div>
       </Stack>
-    </Modal>
+    </Dialog>
   );
 }

@@ -1,15 +1,24 @@
-import { Modal, Stack, Text, Group, Button, List, Radio } from '@mantine/core';
-import { IconSparkles } from '@tabler/icons-react';
 import { useState } from 'react';
+import { IconCheck } from '@tabler/icons-react';
+import { Alert, Button, Dialog, RadioGroup, Stack, Text } from '@var-ui/react';
 import { useAuth } from '../contexts/AuthContext';
 import { billingEnabled, getCheckoutPriceIds, useBillingActions } from '../billing/useBillingActions';
+import { upgradeModal as s } from './UpgradeModal.styles';
 
 interface Props {
   opened: boolean;
   onClose: () => void;
+  /** `limit` when a Free plan limit blocked an action; `menu` when opened from the account menu. */
+  reason?: 'limit' | 'menu';
 }
 
-export function UpgradeModal({ opened, onClose }: Props) {
+const PRO_FEATURES = [
+  'Unlimited displays for every room',
+  'Unlimited views per display',
+  'Everything in Free, including sharing and pairing',
+];
+
+export function UpgradeModal({ opened, onClose, reason = 'limit' }: Props) {
   const { accessToken } = useAuth();
   const { startCheckout, loading, error } = useBillingActions(accessToken);
   const prices = getCheckoutPriceIds();
@@ -19,61 +28,83 @@ export function UpgradeModal({ opened, onClose }: Props) {
   const canUpgrade =
     billingEnabled && Boolean(prices.monthly || prices.annual) && Boolean(accessToken);
 
-  const handleUpgrade = () => {
-    if (!priceId) return;
-    void startCheckout(priceId);
-  };
+  const intervalOptions = [
+    ...(prices.monthly ? [{ value: prices.monthly, label: 'Monthly' }] : []),
+    ...(prices.annual ? [{ value: prices.annual, label: 'Annual' }] : []),
+  ];
 
   return (
-    <Modal
-      opened={opened}
-      onClose={onClose}
-      title="Upgrade to Pro"
-      centered
-      size="sm"
+    <Dialog
+      open={opened}
+      onOpenChange={(open) => {
+        if (!open) onClose();
+      }}
+      title="Upgrade to Homeslate Pro"
+      description={
+        reason === 'limit'
+          ? "You've reached the Free plan limit. Pro removes it."
+          : 'Pro lifts the Free plan limits for the whole house.'
+      }
+      size="xl"
     >
-      <Stack gap="md">
-        <Text size="sm" c="dimmed">
-          You&apos;ve reached the limit on the Free plan. Upgrade to Pro to unlock:
-        </Text>
-        <List
-          spacing="xs"
-          size="sm"
-          icon={<IconSparkles size={16} stroke={1.5} />}
-        >
-          <List.Item>Unlimited displays</List.Item>
-          <List.Item>Unlimited views per display</List.Item>
-        </List>
-        {canUpgrade && (prices.monthly || prices.annual) && (
-          <Radio.Group value={priceId} onChange={setPriceId} label="Billing interval">
-            <Stack gap="xs" mt="xs">
-              {prices.monthly && (
-                <Radio value={prices.monthly} label="Monthly" />
-              )}
-              {prices.annual && (
-                <Radio value={prices.annual} label="Annual" />
-              )}
-            </Stack>
-          </Radio.Group>
+      <Stack gap="lg">
+        <ul className={s.features}>
+          {PRO_FEATURES.map((feature) => (
+            <li key={feature} className={s.feature}>
+              <IconCheck size={16} className={s.check} aria-hidden />
+              <Text as="span" size="sm">
+                {feature}
+              </Text>
+            </li>
+          ))}
+        </ul>
+        {canUpgrade && intervalOptions.length > 1 && (
+          <RadioGroup
+            label="Billing interval"
+            options={intervalOptions}
+            value={priceId}
+            onValueChange={(value) => setPriceId(value ?? defaultPrice)}
+            orientation="horizontal"
+          />
+        )}
+        {!canUpgrade && (
+          // Only when billing isn't configured (local and preview builds): say so plainly,
+          // without a disabled button or a promise we can't keep.
+          <Alert tone="info">
+            Upgrading isn&apos;t available here yet. Everything on the Free plan keeps working.
+          </Alert>
         )}
         {error && (
-          <Text size="sm" c="red">
+          <Alert tone="danger" role="alert">
             {error}
-          </Text>
+          </Alert>
         )}
-        <Group justify="flex-end" gap="sm" mt="xs">
-          <Button variant="default" onClick={onClose} disabled={loading}>
-            Not now
-          </Button>
-          <Button
-            disabled={!canUpgrade || !priceId}
-            loading={loading}
-            onClick={canUpgrade ? handleUpgrade : undefined}
-          >
-            {canUpgrade ? 'Upgrade' : 'Coming soon'}
-          </Button>
-        </Group>
+        <Dialog.Actions>
+          {canUpgrade ? (
+            <>
+              <Button type="button" onClick={onClose} disabled={loading}>
+                Not now
+              </Button>
+              <Button
+                type="button"
+                tone="accent"
+                appearance="solid"
+                disabled={!priceId}
+                loading={loading}
+                onClick={() => {
+                  if (priceId) void startCheckout(priceId);
+                }}
+              >
+                Upgrade to Pro
+              </Button>
+            </>
+          ) : (
+            <Button type="button" tone="accent" appearance="solid" onClick={onClose}>
+              Got it
+            </Button>
+          )}
+        </Dialog.Actions>
       </Stack>
-    </Modal>
+    </Dialog>
   );
 }

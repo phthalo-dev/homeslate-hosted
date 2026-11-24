@@ -1,9 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { applyUpdate, subscribeToPendingUpdate } from '../pwaUpdate';
-import classes from './PwaUpdateToast.module.css';
+import { pwaUpdateToast } from './PwaUpdateToast.styles';
 
 const RELOAD_DELAY_MS = 3000;
 
+/**
+ * Display-surface notice before a PWA reload. Plain DOM on purpose: the wall
+ * viewer has no Var UI `ToastProvider`, and this must render on any theme.
+ */
 export function PwaUpdateToast() {
   const [visible, setVisible] = useState(false);
   const startedRef = useRef(false);
@@ -22,7 +26,7 @@ export function PwaUpdateToast() {
   if (!visible) return null;
 
   return (
-    <div className={classes.toast} role="status" aria-live="polite">
+    <div className={pwaUpdateToast} role="status" aria-live="polite">
       Updating…
     </div>
   );
